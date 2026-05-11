@@ -143,6 +143,10 @@ fi
 [ -f "${extract_dir}/${binary_name}" ] || fail "archive did not contain ${binary_name}"
 install -m 0755 "${extract_dir}/${binary_name}" "${binary_path}"
 
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl --user stop "$SERVICE_NAME" >/dev/null 2>&1 || true
+fi
+
 if [[ ! -x "$ACPX_BIN" ]]; then
   log "installing managed acpx sidecar into ${ACPX_PREFIX}"
   npm install --global --prefix "$ACPX_PREFIX" "$ACPX_NPM_SPEC"
@@ -157,20 +161,22 @@ else
   log "reusing existing node config: ${CONFIG_PATH}"
 fi
 
-if [[ ! -f "$STATE_PATH" ]]; then
-  if [[ -z "$REGISTRATION_TOKEN" ]]; then
-    fail "REGISTRATION_TOKEN is required for first-time registration"
+if [[ -n "$REGISTRATION_TOKEN" ]]; then
+  if [[ -f "$STATE_PATH" ]]; then
+    log "registration token provided; refreshing node registration for ${NODE_ID}"
+  else
+    log "no node state found; registering node ${NODE_ID} against ${SERVER_URL}"
   fi
-
-  log "no node state found; registering node ${NODE_ID} against ${SERVER_URL}"
   "$binary_path" register \
     --server "$SERVER_URL" \
     --token "$REGISTRATION_TOKEN" \
     --node-id "$NODE_ID" \
     --config "$CONFIG_PATH" \
     --state "$STATE_PATH"
-else
+elif [[ -f "$STATE_PATH" ]]; then
   log "reusing existing node state: ${STATE_PATH}"
+else
+  fail "REGISTRATION_TOKEN is required for first-time registration"
 fi
 
 cat >"$SERVICE_PATH" <<EOF
