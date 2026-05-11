@@ -34,6 +34,11 @@ beforeEach(() => {
         }
         return response({ message: "invalid password" }, 401);
       }
+      if (url.endsWith("/api/bootstrap")) {
+        return response({
+          registrationToken: "server-registered-token"
+        });
+      }
       if (url.endsWith("/api/sessions")) {
         return response([]);
       }
@@ -121,6 +126,21 @@ describe("App shell", () => {
     fireEvent.click(screen.getByRole("button", { name: /sign in/i }));
 
     await waitFor(() => expect(screen.getByLabelText(/amesh home/i)).toBeTruthy());
+  });
+
+  it("loads the registration token from the server when opening the add node panel", async () => {
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: /add node/i })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: /add node/i }));
+
+    await waitFor(() => {
+      const input = screen.getByLabelText(/registration token/i) as HTMLInputElement;
+      expect(input.value).toBe("server-registered-token");
+    });
+    await waitFor(() =>
+      expect(screen.getByText(/REGISTRATION_TOKEN='server-registered-token'/i)).toBeTruthy()
+    );
   });
 });
 

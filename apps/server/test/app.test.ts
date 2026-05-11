@@ -149,6 +149,26 @@ describe("server app", () => {
     expect(response.statusCode).toBe(401);
   });
 
+  it("returns the configured registration token to authenticated browser clients", async () => {
+    const guardedApp = buildApp({
+      dbPath: ":memory:",
+      registrationToken: "expected-token",
+      authPassword: "secret-pass",
+      authSecret: "test-secret"
+    });
+    await guardedApp.listen({ port: 0, host: "127.0.0.1" });
+    const guardedCookie = await loginCookie(guardedApp);
+
+    const response = await injectAuthed(guardedApp, guardedCookie, {
+      method: "GET",
+      url: "/api/bootstrap"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ registrationToken: "expected-token" });
+    await guardedApp.close();
+  });
+
   it("resumes a registered node with a reconnect token and keeps routing sessions", async () => {
     const firstSocket = new WebSocket(`ws://${address}/ws?role=node&nodeId=node-1`);
     await waitForOpen(firstSocket);

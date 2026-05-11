@@ -60,6 +60,11 @@ export async function fetchTopology(): Promise<TopologySnapshot> {
   return response.json();
 }
 
+export async function fetchBootstrapConfig(): Promise<{ registrationToken: string }> {
+  const response = await apiFetch("/api/bootstrap");
+  return response.json();
+}
+
 export async function createTriggerRule(input: {
   sourceAgentId: string;
   targetAgentId: string;

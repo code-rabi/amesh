@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { fetchBootstrapConfig } from "../api.js";
 
 type Props = {
   waitingForNodes: boolean;
@@ -13,7 +14,7 @@ function installCommand(serverUrl: string, token: string) {
 }
 
 export function AddNodePanel({ waitingForNodes, onClose }: Props) {
-  const [token, setToken] = useState("your-registration-token");
+  const [token, setToken] = useState("");
   const [copied, setCopied] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -22,6 +23,18 @@ export function AddNodePanel({ waitingForNodes, onClose }: Props) {
   const snippet = installCommand(serverOrigin, token);
 
   useEffect(() => {
+    let active = true;
+
+    void fetchBootstrapConfig()
+      .then((config) => {
+        if (!active) return;
+        setToken(config.registrationToken);
+      })
+      .catch(() => {
+        if (!active) return;
+        setToken("");
+      });
+
     function onKey(event: KeyboardEvent) {
       if (event.key === "Escape") onClose();
     }
@@ -31,6 +44,7 @@ export function AddNodePanel({ waitingForNodes, onClose }: Props) {
     window.addEventListener("keydown", onKey);
     window.addEventListener("mousedown", onClick);
     return () => {
+      active = false;
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("mousedown", onClick);
     };
@@ -65,6 +79,7 @@ export function AddNodePanel({ waitingForNodes, onClose }: Props) {
           id="amesh-token"
           type="text"
           spellCheck={false}
+          placeholder="registration token"
           value={token}
           onChange={(event) => setToken(event.target.value)}
         />

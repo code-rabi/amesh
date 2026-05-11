@@ -436,6 +436,9 @@ export function buildApp(options: AppOptions = {}) {
 
   app.get("/api/nodes", { preHandler: requireBrowserAuth }, async () => repository.listTopology().nodes);
   app.get("/api/agents", { preHandler: requireBrowserAuth }, async () => repository.listTopology().agents);
+  app.get("/api/bootstrap", { preHandler: requireBrowserAuth }, async () => ({
+    registrationToken
+  }));
   app.get("/api/trigger-rules", { preHandler: requireBrowserAuth }, async () =>
     repository.listTopology().triggerRules
   );
