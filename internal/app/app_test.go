@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -304,6 +307,67 @@ Commands:
 	}
 }
 
+func TestDefaultACPXCommandFallsBackToManagedInstall(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AMESH_ACPX_PATH", "")
+
+	managed := filepath.Join(home, ".local", "share", "amesh", "acpx", "bin", "acpx")
+	writeExecutable(t, managed, "#!/bin/sh\nexit 0\n")
+
+	if got := defaultACPXCommand(); got != managed {
+		t.Fatalf("defaultACPXCommand() = %q, want %q", got, managed)
+	}
+}
+
+func TestDetectAgentsFindsInstalledAgentsWithoutHealthProbe(t *testing.T) {
+	home := t.TempDir()
+	binDir := filepath.Join(t.TempDir(), "bin")
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", binDir)
+	t.Setenv("AMESH_ACPX_PATH", "")
+
+	managed := filepath.Join(home, ".local", "share", "amesh", "acpx", "bin", "acpx")
+	writeExecutable(t, managed, `#!/bin/sh
+if [ "$1" = "--help" ]; then
+cat <<'EOF'
+Commands:
+  codex [options] [prompt...]             Use codex agent
+  claude [options] [prompt...]            Use claude agent
+  gemini [options] [prompt...]            Use gemini agent
+EOF
+exit 0
+fi
+exit 1
+`)
+	writeExecutable(t, filepath.Join(binDir, "codex"), "#!/bin/sh\nexit 0\n")
+	writeExecutable(t, filepath.Join(binDir, "claude"), "#!/bin/sh\nexit 0\n")
+
+	got := detectAgents(context.Background(), acpx.Runner{})
+	slices.SortFunc(got, func(a, b nodeconfig.AgentConfig) int {
+		return strings.Compare(a.ID, b.ID)
+	})
+	want := []nodeconfig.AgentConfig{
+		{
+			ID:        "agent-claude",
+			Name:      "Claude",
+			ACPXAgent: "claude",
+			Command:   managed,
+			Labels:    []string{"detected"},
+		},
+		{
+			ID:        "agent-codex",
+			Name:      "Codex",
+			ACPXAgent: "codex",
+			Command:   managed,
+			Labels:    []string{"detected"},
+		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("detectAgents() = %#v, want %#v", got, want)
+	}
+}
+
 type fakeDaemonClient struct {
 	mu                      sync.Mutex
 	connectErr              error
@@ -394,4 +458,15 @@ func writeConfig(t *testing.T, config nodeconfig.File) string {
 		t.Fatalf("save config: %v", err)
 	}
 	return path
+}
+
+func writeExecutable(t *testing.T, path string, contents string) {
+	t.Helper()
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", path, err)
+	}
+	if err := os.WriteFile(path, []byte(contents), 0o755); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
 }

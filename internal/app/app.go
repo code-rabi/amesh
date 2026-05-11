@@ -186,6 +186,12 @@ func defaultACPXCommand() string {
 	if path := strings.TrimSpace(os.Getenv("AMESH_ACPX_PATH")); path != "" {
 		return path
 	}
+	if home, err := os.UserHomeDir(); err == nil {
+		managed := filepath.Join(home, ".local", "share", "amesh", "acpx", "bin", "acpx")
+		if _, err := os.Stat(managed); err == nil {
+			return managed
+		}
+	}
 	return "acpx"
 }
 
@@ -225,14 +231,14 @@ func runDetectCommand(ctx context.Context, args []string, detect detectRunner) e
 }
 
 func detectAgents(ctx context.Context, runner acpx.Runner) []nodeconfig.AgentConfig {
-	probe := probeAgentHealth(runner)
 	candidates := detectableAgents
 	if parsed, err := detectableAgentsFromACPXHelp(ctx, defaultACPXCommand()); err == nil && len(parsed) > 0 {
 		candidates = parsed
 	}
 
+	detectedCandidates := detectInstalledAgents(candidates)
 	agents := make([]nodeconfig.AgentConfig, 0, len(candidates))
-	for _, candidate := range candidates {
+	for _, candidate := range detectedCandidates {
 		agent := nodeconfig.AgentConfig{
 			ID:        candidate.ID,
 			Name:      candidate.Name,
@@ -240,11 +246,19 @@ func detectAgents(ctx context.Context, runner acpx.Runner) []nodeconfig.AgentCon
 			Command:   defaultACPXCommand(),
 			Labels:    []string{"detected"},
 		}
-		if probe(ctx, agent) {
-			agents = append(agents, agent)
-		}
+		agents = append(agents, agent)
 	}
 	return agents
+}
+
+func detectInstalledAgents(candidates []detectableAgent) []detectableAgent {
+	detected := make([]detectableAgent, 0, len(candidates))
+	for _, candidate := range candidates {
+		if _, err := exec.LookPath(candidate.ACPXAgent); err == nil {
+			detected = append(detected, candidate)
+		}
+	}
+	return detected
 }
 
 func detectableAgentsFromACPXHelp(ctx context.Context, command string) ([]detectableAgent, error) {
@@ -740,7 +754,7 @@ func filterHealthyAgents(
 
 func probeAgentHealth(runner acpx.Runner) capabilityProber {
 	return func(ctx context.Context, agent nodeconfig.AgentConfig) bool {
-		probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		probeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
 
 		return runner.Ensure(probeCtx, acpx.RunRequest{

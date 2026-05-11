@@ -34,6 +34,7 @@ sh -n scripts/install-amesh-node.sh
 - Set `AUTH_SESSION_SECRET` if you want browser sessions to survive a server restart. If it is missing, the server generates a random in-memory secret and all cookies are invalidated on restart.
 - The server enforces `AMESH_REGISTRATION_TOKEN` when set. In local development, leaving it unset keeps registration open; in deployed environments it should be set explicitly.
 - The Go daemon expects an `agents.json`-shaped capabilities file for local agent definitions, but `amesh-node detect --config <path>` can generate that file from live ACPX probing.
+- Detection records locally installed ACPX-backed agent CLIs even if a given provider is slow to start or temporarily unhealthy; live topology health is still decided by the separate daemon-side ACPX health probe loop.
 - `corepack pnpm dev:daemon` installs a managed ACPX sidecar under `~/.local/share/amesh/acpx` if needed, writes `.amesh-agents.json` by detection on first run, saves `.amesh-node-state.json`, and then starts the long-lived daemon process against that generated config.
 - The daemon now keeps running when the control plane goes away. It retries websocket connect, `node.resume`, and capability sync with backoff until the server returns.
 - Agent topology status is derived from daemon-side ACPX health probes, not just from the node websocket being connected. Unhealthy local agents are omitted from capability sync and appear offline in the control plane.

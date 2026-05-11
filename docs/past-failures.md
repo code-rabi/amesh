@@ -17,6 +17,7 @@
 - The daemon and installer defaulted to a demo config with `claude`, `codex`, and `openclaw`, even on machines where those local ACPX targets were not actually available.
 - Consequence: fresh nodes looked broken or permanently offline because the first advertised inventory was a placeholder and health probing immediately knocked those fake agents out.
 - Mitigation: the daemon now has a first-class `detect` command, uses detection as the default config bootstrap path, and the dashboard can trigger detection on an online node to refresh inventory in place.
+- Follow-up: detection now prefers the managed ACPX sidecar path automatically and records installed local agent CLIs before health filtering, so slow ACPX providers do not disappear from config generation.
 
 ## 2026-05-11: Missing Go toolchain in local automation
 
