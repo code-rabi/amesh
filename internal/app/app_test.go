@@ -70,6 +70,9 @@ func TestRunDaemonLoopReconnectsAfterDisconnect(t *testing.T) {
 				next++
 				return client
 			},
+			func(context.Context, nodeconfig.AgentConfig) bool {
+				return true
+			},
 			func(ctx context.Context, delay time.Duration) error {
 				mu.Lock()
 				sleeps++
@@ -98,6 +101,23 @@ func TestRunDaemonLoopReconnectsAfterDisconnect(t *testing.T) {
 
 	assertEnvelopeTypes(t, first.sent, []string{"node.resume", "node.capabilities.sync"})
 	assertEnvelopeTypes(t, second.sent, []string{"node.resume", "node.capabilities.sync"})
+}
+
+func TestFilterHealthyAgents(t *testing.T) {
+	t.Parallel()
+
+	agents := []nodeconfig.AgentConfig{
+		{ID: "healthy", Name: "Healthy", ACPXAgent: "healthy"},
+		{ID: "down", Name: "Down", ACPXAgent: "down"},
+	}
+
+	got := filterHealthyAgents(context.Background(), agents, func(_ context.Context, agent nodeconfig.AgentConfig) bool {
+		return agent.ID != "down"
+	})
+
+	if len(got) != 1 || got[0].ID != "healthy" {
+		t.Fatalf("filterHealthyAgents() = %#v, want only healthy agent", got)
+	}
 }
 
 type fakeDaemonClient struct {

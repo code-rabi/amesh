@@ -33,6 +33,8 @@ type daemonClientFactory func(serverURL string) daemonClient
 
 type sleeper func(ctx context.Context, delay time.Duration) error
 
+type capabilityProber func(ctx context.Context, agent nodeconfig.AgentConfig) bool
+
 type retryableDaemonError struct {
 	err error
 }
@@ -217,6 +219,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		func(serverURL string) daemonClient {
 			return nodeclient.New(serverURL)
 		},
+		probeAgentHealth(acpx.Runner{}),
 		sleepWithContext,
 	)
 }
@@ -313,12 +316,13 @@ func runDaemonLoop(
 	runner acpx.Runner,
 	sessions *sessionStore,
 	clientFactory daemonClientFactory,
+	probe capabilityProber,
 	sleep sleeper,
 ) error {
 	backoff := time.Second
 
 	for {
-		err := runDaemonSession(ctx, serverURL, nodeID, reconnectToken, config, runner, sessions, clientFactory)
+		err := runDaemonSession(ctx, serverURL, nodeID, reconnectToken, config, runner, sessions, clientFactory, probe)
 		if err == nil || errors.Is(err, context.Canceled) {
 			return nil
 		}
@@ -349,6 +353,7 @@ func runDaemonSession(
 	runner acpx.Runner,
 	sessions *sessionStore,
 	clientFactory daemonClientFactory,
+	probe capabilityProber,
 ) error {
 	client := clientFactory(serverURL + "&nodeId=" + nodeID)
 	if err := client.Connect(ctx); err != nil {
@@ -381,16 +386,7 @@ func runDaemonSession(
 		return fmt.Errorf("unexpected resume reply %q", reply.Type)
 	}
 
-	if err := client.Send(ctx, nodeclient.Envelope{
-		Type:      "node.capabilities.sync",
-		RequestID: fmt.Sprintf("sync-%d", time.Now().UnixNano()),
-		Source:    nodeID,
-		Target:    "server",
-		Payload: map[string]any{
-			"nodeId":       nodeID,
-			"capabilities": config.Agents,
-		},
-	}); err != nil {
+	if err := syncHealthyCapabilities(ctx, client, nodeID, config, probe); err != nil {
 		return retryableDaemonError{err: err}
 	}
 
@@ -398,6 +394,9 @@ func runDaemonSession(
 	defer cancel()
 	go func() {
 		_ = client.HeartbeatLoop(sessionCtx, nodeID)
+	}()
+	go func() {
+		_ = capabilitySyncLoop(sessionCtx, client, nodeID, config, probe)
 	}()
 
 	for {
@@ -418,6 +417,78 @@ func runDaemonSession(
 				return retryableDaemonError{err: err}
 			}
 		}
+	}
+}
+
+func syncHealthyCapabilities(
+	ctx context.Context,
+	client daemonClient,
+	nodeID string,
+	config nodeconfig.File,
+	probe capabilityProber,
+) error {
+	capabilities := filterHealthyAgents(ctx, config.Agents, probe)
+	return client.Send(ctx, nodeclient.Envelope{
+		Type:      "node.capabilities.sync",
+		RequestID: fmt.Sprintf("sync-%d", time.Now().UnixNano()),
+		Source:    nodeID,
+		Target:    "server",
+		Payload: map[string]any{
+			"nodeId":       nodeID,
+			"capabilities": capabilities,
+		},
+	})
+}
+
+func capabilitySyncLoop(
+	ctx context.Context,
+	client daemonClient,
+	nodeID string,
+	config nodeconfig.File,
+	probe capabilityProber,
+) error {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			if err := syncHealthyCapabilities(ctx, client, nodeID, config, probe); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func filterHealthyAgents(
+	ctx context.Context,
+	agents []nodeconfig.AgentConfig,
+	probe capabilityProber,
+) []nodeconfig.AgentConfig {
+	healthy := make([]nodeconfig.AgentConfig, 0, len(agents))
+	for _, agent := range agents {
+		if probe == nil || probe(ctx, agent) {
+			healthy = append(healthy, agent)
+		}
+	}
+	return healthy
+}
+
+func probeAgentHealth(runner acpx.Runner) capabilityProber {
+	return func(ctx context.Context, agent nodeconfig.AgentConfig) bool {
+		probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+
+		return runner.Ensure(probeCtx, acpx.RunRequest{
+			Command:    agent.Command,
+			Args:       agent.Args,
+			Agent:      agent.ACPXAgent,
+			Session:    "amesh-health-" + agent.ID,
+			WorkingDir: agent.CWD,
+			Env:        envList(agent.Env),
+		}) == nil
 	}
 }
 

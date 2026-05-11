@@ -25,6 +25,18 @@ type RunRequest struct {
 // Runner executes local acpx-backed agent requests.
 type Runner struct{}
 
+// Ensure checks that the configured ACPX-backed agent session can be established.
+func (Runner) Ensure(ctx context.Context, request RunRequest) error {
+	command := request.Command
+	if command == "" {
+		command = "acpx"
+	}
+	if strings.TrimSpace(request.Agent) == "" {
+		return nil
+	}
+	return runCommand(ctx, command, buildEnsureArgs(request), request.WorkingDir, request.Env, "")
+}
+
 // Run starts the configured process, streams stdout line-by-line through onStdoutLine,
 // and returns the full stdout output. stderr is captured separately and discarded; acpx's
 // stderr is debug noise (status banners, token footers) and would corrupt structured
@@ -40,7 +52,7 @@ func (Runner) Run(
 	}
 
 	if strings.TrimSpace(request.Agent) != "" {
-		if err := runCommand(ctx, command, buildEnsureArgs(request), request.WorkingDir, request.Env, ""); err != nil {
+		if err := (Runner{}).Ensure(ctx, request); err != nil {
 			return nil, fmt.Errorf("ensure acpx session: %w", err)
 		}
 		return runStreamingCommand(ctx, command, buildPromptArgs(request), request.WorkingDir, request.Env, request.Stdin, onStdoutLine)
