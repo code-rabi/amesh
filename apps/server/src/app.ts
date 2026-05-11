@@ -27,13 +27,21 @@ import {
   topologySnapshotSchema,
   upsertTriggerRuleRequestSchema
 } from "@amesh/protocol";
-import Fastify from "fastify";
+import cookie from "@fastify/cookie";
+import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { nanoid } from "nanoid";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import WebSocket, { WebSocketServer } from "ws";
 
+import {
+  constantTimeStringEqual,
+  issueSession,
+  readSessionCookieFromHeader,
+  resolveAuthConfig,
+  verifySession
+} from "./auth.js";
 import { createDatabase } from "./db/client.js";
 import { Repository } from "./repository.js";
 
@@ -43,6 +51,8 @@ type AppOptions = {
   dbPath?: string;
   registrationToken?: string;
   staticRoot?: string;
+  authPassword?: string;
+  authSecret?: string;
 };
 
 type NodeSocket = {
@@ -56,13 +66,29 @@ function websocketSend(socket: WebSocket, payload: unknown) {
 
 export function buildApp(options: AppOptions = {}) {
   const app = Fastify({ logger: false });
+  void app.register(cookie);
   const db = createDatabase(options.dbPath ?? "apps/server/data/amesh.sqlite");
   const repository = new Repository(db);
   const registrationToken =
     options.registrationToken ?? process.env.AMESH_REGISTRATION_TOKEN ?? "";
+  const authConfig = resolveAuthConfig({
+    password: options.authPassword,
+    secret: options.authSecret
+  });
   const browserSockets = new Set<WebSocket>();
   const nodeSockets = new Map<string, NodeSocket>();
   const websocketServer = new WebSocketServer({ noServer: true });
+
+  function isAuthenticated(cookieValue: string | undefined) {
+    return verifySession(authConfig, cookieValue) !== null;
+  }
+
+  async function requireBrowserAuth(request: FastifyRequest, reply: FastifyReply) {
+    if (isAuthenticated(request.cookies[authConfig.cookieName])) {
+      return;
+    }
+    reply.code(401).send({ message: "authentication required" });
+  }
 
   async function broadcastTopology() {
     const snapshot = topologySnapshotSchema.parse(repository.listTopology());
@@ -381,12 +407,43 @@ export function buildApp(options: AppOptions = {}) {
     return { message: "upgrade required" };
   });
 
-  app.get("/api/nodes", async () => repository.listTopology().nodes);
-  app.get("/api/agents", async () => repository.listTopology().agents);
-  app.get("/api/trigger-rules", async () => repository.listTopology().triggerRules);
-  app.get("/api/topology", async () => topologySnapshotSchema.parse(repository.listTopology()));
-  app.get("/api/sessions", async () => repository.listSessions());
-  app.get("/api/sessions/:sessionId", async (request, reply) => {
+  app.get("/api/auth/session", async (request) => ({
+    authenticated: isAuthenticated(request.cookies[authConfig.cookieName]),
+    username: authConfig.username
+  }));
+
+  app.post("/api/auth/login", async (request, reply) => {
+    const body = request.body as { password?: unknown } | undefined;
+    const password = typeof body?.password === "string" ? body.password : "";
+    if (!constantTimeStringEqual(password, authConfig.password)) {
+      reply.code(401).send({ message: "invalid password" });
+      return;
+    }
+
+    reply.setCookie(authConfig.cookieName, issueSession(authConfig, authConfig.username), {
+      httpOnly: true,
+      sameSite: "lax",
+      path: "/",
+      maxAge: Math.floor(authConfig.sessionTtlMs / 1000)
+    });
+    return { authenticated: true, username: authConfig.username };
+  });
+
+  app.post("/api/auth/logout", async (_request, reply) => {
+    reply.clearCookie(authConfig.cookieName, { path: "/" });
+    return { authenticated: false };
+  });
+
+  app.get("/api/nodes", { preHandler: requireBrowserAuth }, async () => repository.listTopology().nodes);
+  app.get("/api/agents", { preHandler: requireBrowserAuth }, async () => repository.listTopology().agents);
+  app.get("/api/trigger-rules", { preHandler: requireBrowserAuth }, async () =>
+    repository.listTopology().triggerRules
+  );
+  app.get("/api/topology", { preHandler: requireBrowserAuth }, async () =>
+    topologySnapshotSchema.parse(repository.listTopology())
+  );
+  app.get("/api/sessions", { preHandler: requireBrowserAuth }, async () => repository.listSessions());
+  app.get("/api/sessions/:sessionId", { preHandler: requireBrowserAuth }, async (request, reply) => {
     const state = repository.getSession((request.params as { sessionId: string }).sessionId);
     if (!state) {
       reply.code(404);
@@ -395,13 +452,13 @@ export function buildApp(options: AppOptions = {}) {
     return state;
   });
 
-  app.post("/api/trigger-rules", async (request) => {
+  app.post("/api/trigger-rules", { preHandler: requireBrowserAuth }, async (request) => {
     const body = upsertTriggerRuleRequestSchema.parse(request.body) as UpsertTriggerRuleRequest;
     const rule = repository.upsertTriggerRule(body);
     await broadcastTopology();
     return rule;
   });
-  app.delete("/api/trigger-rules/:id", async (request, reply) => {
+  app.delete("/api/trigger-rules/:id", { preHandler: requireBrowserAuth }, async (request, reply) => {
     const params = request.params as { id: string };
     const deleted = repository.deleteTriggerRule(params.id);
     if (!deleted) {
@@ -412,7 +469,7 @@ export function buildApp(options: AppOptions = {}) {
     return { ok: true };
   });
 
-  app.post("/api/sessions", async (request, reply) => {
+  app.post("/api/sessions", { preHandler: requireBrowserAuth }, async (request, reply) => {
     const body = createSessionRequestSchema.parse(request.body) as CreateSessionRequest;
     const agent = repository.findAgent(body.agentId);
     if (!agent) {
@@ -447,7 +504,7 @@ export function buildApp(options: AppOptions = {}) {
     return repository.getSession(session.id);
   });
 
-  app.post("/api/sessions/:sessionId/input", async (request, reply) => {
+  app.post("/api/sessions/:sessionId/input", { preHandler: requireBrowserAuth }, async (request, reply) => {
     const params = request.params as { sessionId: string };
     const body = appendSessionInputRequestSchema.parse(request.body);
     const state = repository.getSession(params.sessionId);
@@ -487,7 +544,7 @@ export function buildApp(options: AppOptions = {}) {
     return repository.getSession(state.session.id);
   });
 
-  app.post("/api/sessions/:sessionId/cancel", async (request, reply) => {
+  app.post("/api/sessions/:sessionId/cancel", { preHandler: requireBrowserAuth }, async (request, reply) => {
     const params = request.params as { sessionId: string };
     const state = repository.getSession(params.sessionId);
     if (!state) {
@@ -534,8 +591,17 @@ export function buildApp(options: AppOptions = {}) {
       socket.destroy();
       return;
     }
+    const role = url.searchParams.get("role") as Role | null;
+    if (role === "browser") {
+      const rawCookie = readSessionCookieFromHeader(request.headers.cookie, authConfig.cookieName);
+      if (!isAuthenticated(rawCookie ?? undefined)) {
+        socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+    }
     websocketServer.handleUpgrade(request, socket, head, (client) => {
-      bindSocket(client, url.searchParams.get("role") as Role | null, url.searchParams.get("nodeId"));
+      bindSocket(client, role, url.searchParams.get("nodeId"));
     });
   });
 

@@ -90,6 +90,77 @@ body {
   font-feature-settings: "ss01" on, "cv11" on;
 }
 
+.auth-shell {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: var(--s-6);
+  background:
+    radial-gradient(circle at top left, var(--c-accent-soft), transparent 28%),
+    linear-gradient(180deg, var(--c-surface), var(--c-surface-raised));
+}
+
+.auth-panel {
+  width: min(100%, 420px);
+  padding: var(--s-6);
+  border: 1px solid var(--c-line);
+  border-radius: var(--r-md);
+  background: color-mix(in oklab, var(--c-surface) 82%, white 18%);
+  box-shadow: var(--shadow-float);
+}
+
+.auth-kicker {
+  margin: 0 0 var(--s-3);
+  font: var(--t-label);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--c-accent-strong);
+}
+
+.auth-panel h1 {
+  margin: 0;
+  font: var(--t-display);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.auth-copy {
+  margin: var(--s-3) 0 var(--s-5);
+  color: var(--c-mute);
+}
+
+.auth-form {
+  display: grid;
+  gap: var(--s-3);
+}
+
+.auth-label {
+  font: var(--t-title);
+}
+
+.auth-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--c-line);
+  border-radius: var(--r-sm);
+  background: var(--c-surface);
+  color: var(--c-ink);
+  font: var(--t-body);
+}
+
+.auth-input:disabled {
+  opacity: 0.7;
+}
+
+.auth-error {
+  margin: 0;
+  color: var(--c-error);
+}
+
+.auth-submit {
+  width: 100%;
+}
+
 /* Focus discipline — visible focus rings via the accent */
 :focus-visible {
   outline: 2px solid var(--c-accent);

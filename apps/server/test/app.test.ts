@@ -10,15 +10,17 @@ import { buildApp } from "../src/app.js";
 describe("server app", () => {
   let app: ReturnType<typeof buildApp>;
   let address = "";
+  let authCookie = "";
 
   beforeEach(async () => {
-    app = buildApp({ dbPath: ":memory:" });
+    app = buildApp({ dbPath: ":memory:", authPassword: "secret-pass", authSecret: "test-secret" });
     await app.listen({ port: 0, host: "127.0.0.1" });
     const serverAddress = app.server.address() as AddressInfo | null;
     if (!serverAddress) {
       throw new Error("server address missing");
     }
     address = `${serverAddress.address}:${serverAddress.port}`;
+    authCookie = await loginCookie(app);
   });
 
   afterEach(async () => {
@@ -79,21 +81,21 @@ describe("server app", () => {
 
     await waitForIdle();
 
-    const response = await app.inject({
+    const response = await injectAuthed(app, authCookie, {
       method: "GET",
       url: "/api/topology"
     });
     expect(response.statusCode).toBe(200);
     expect(response.json().agents).toHaveLength(1);
 
-    const nodesResponse = await app.inject({
+    const nodesResponse = await injectAuthed(app, authCookie, {
       method: "GET",
       url: "/api/nodes"
     });
     expect(nodesResponse.statusCode).toBe(200);
     expect(nodesResponse.json()).toHaveLength(1);
 
-    const agentsResponse = await app.inject({
+    const agentsResponse = await injectAuthed(app, authCookie, {
       method: "GET",
       url: "/api/agents"
     });
@@ -138,6 +140,15 @@ describe("server app", () => {
     await guardedApp.close();
   });
 
+  it("requires an authenticated cookie for browser APIs", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/topology"
+    });
+
+    expect(response.statusCode).toBe(401);
+  });
+
   it("resumes a registered node with a reconnect token and keeps routing sessions", async () => {
     const firstSocket = new WebSocket(`ws://${address}/ws?role=node&nodeId=node-1`);
     await waitForOpen(firstSocket);
@@ -172,7 +183,7 @@ describe("server app", () => {
     const resumed = await readNodeMessage(resumedSocket);
     expect(resumed.type).toBe("node.resumed");
 
-    const create = await app.inject({
+    const create = await injectAuthed(app, authCookie, {
       method: "POST",
       url: "/api/sessions",
       payload: {
@@ -205,7 +216,7 @@ describe("server app", () => {
 
     await waitForIdle();
 
-    const create = await app.inject({
+    const create = await injectAuthed(app, authCookie, {
       method: "POST",
       url: "/api/sessions",
       payload: {
@@ -241,7 +252,7 @@ describe("server app", () => {
 
     await waitForIdle();
 
-    const state = await app.inject({
+    const state = await injectAuthed(app, authCookie, {
       method: "GET",
       url: `/api/sessions/${sessionId}`
     });
@@ -274,7 +285,7 @@ describe("server app", () => {
 
     await waitForIdle();
 
-    const rule = await app.inject({
+    const rule = await injectAuthed(app, authCookie, {
       method: "POST",
       url: "/api/trigger-rules",
       payload: {
@@ -285,7 +296,7 @@ describe("server app", () => {
     });
     expect(rule.statusCode).toBe(200);
 
-    const create = await app.inject({
+    const create = await injectAuthed(app, authCookie, {
       method: "POST",
       url: "/api/sessions",
       payload: {
@@ -348,7 +359,7 @@ describe("server app", () => {
 
     await waitForIdle();
 
-    const parentState = await app.inject({
+    const parentState = await injectAuthed(app, authCookie, {
       method: "GET",
       url: `/api/sessions/${parentSessionId}`
     });
@@ -358,7 +369,7 @@ describe("server app", () => {
     expect(parentEventTypes).toContain("session.invocation.allowed");
     expect(parentEventTypes).toContain("session.invocation.completed");
 
-    const childState = await app.inject({
+    const childState = await injectAuthed(app, authCookie, {
       method: "GET",
       url: `/api/sessions/${childSessionId}`
     });
@@ -380,7 +391,7 @@ describe("server app", () => {
 
     await waitForIdle();
 
-    const create = await app.inject({
+    const create = await injectAuthed(app, authCookie, {
       method: "POST",
       url: "/api/sessions",
       payload: {
@@ -392,7 +403,7 @@ describe("server app", () => {
     await readNodeMessage(node);
 
     const cancelPromise = readNodeMessage(node);
-    const cancel = await app.inject({
+    const cancel = await injectAuthed(app, authCookie, {
       method: "POST",
       url: `/api/sessions/${sessionId}/cancel`
     });
@@ -401,7 +412,7 @@ describe("server app", () => {
     const cancelMessage = await cancelPromise;
     expect(cancelMessage.type).toBe("session.cancel");
 
-    const state = await app.inject({
+    const state = await injectAuthed(app, authCookie, {
       method: "GET",
       url: `/api/sessions/${sessionId}`
     });
@@ -424,7 +435,7 @@ describe("server app", () => {
 
       await waitForIdle();
 
-      const create = await app.inject({
+      const create = await injectAuthed(app, authCookie, {
         method: "POST",
         url: "/api/sessions",
         payload: {
@@ -458,7 +469,7 @@ describe("server app", () => {
       );
       await waitForIdle();
 
-      const append = await app.inject({
+      const append = await injectAuthed(app, authCookie, {
         method: "POST",
         url: `/api/sessions/${sessionId}/input`,
         payload: {
@@ -493,7 +504,7 @@ describe("server app", () => {
       );
       await waitForIdle();
 
-      const state = await app.inject({
+      const state = await injectAuthed(app, authCookie, {
         method: "GET",
         url: `/api/sessions/${sessionId}`
       });
@@ -542,7 +553,7 @@ describe("server app", () => {
   });
 
   it("deletes trigger rules through the control-plane API", async () => {
-    const create = await app.inject({
+    const create = await injectAuthed(app, authCookie, {
       method: "POST",
       url: "/api/trigger-rules",
       payload: {
@@ -553,13 +564,13 @@ describe("server app", () => {
     });
     const ruleId = create.json().id;
 
-    const deleted = await app.inject({
+    const deleted = await injectAuthed(app, authCookie, {
       method: "DELETE",
       url: `/api/trigger-rules/${ruleId}`
     });
     expect(deleted.statusCode).toBe(200);
 
-    const rules = await app.inject({
+    const rules = await injectAuthed(app, authCookie, {
       method: "GET",
       url: "/api/trigger-rules"
     });
@@ -620,5 +631,34 @@ async function readNodeMessage(socket: WebSocket) {
       resolve(JSON.parse(String(data)));
     });
     socket.once("error", reject);
+  });
+}
+
+async function loginCookie(app: ReturnType<typeof buildApp>) {
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/auth/login",
+    payload: {
+      password: "secret-pass"
+    }
+  });
+  const cookie = response.headers["set-cookie"];
+  if (!cookie) {
+    throw new Error("auth cookie missing");
+  }
+  return String(cookie).split(";")[0];
+}
+
+async function injectAuthed(
+  app: ReturnType<typeof buildApp>,
+  cookie: string,
+  options: any
+) {
+  return await app.inject({
+    ...options,
+    headers: {
+      ...(options.headers ?? {}),
+      cookie
+    }
   });
 }

@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "../src/App.js";
@@ -12,13 +12,28 @@ class MockSocket {
 }
 
 const socket = new MockSocket();
+let authenticated = true;
 
 beforeEach(() => {
   vi.stubGlobal("WebSocket", vi.fn(() => socket));
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: RequestInfo | URL) => {
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      if (url.endsWith("/api/auth/session")) {
+        return response({
+          authenticated,
+          username: "admin"
+        });
+      }
+      if (url.endsWith("/api/auth/login")) {
+        const payload = JSON.parse(String(init?.body ?? "{}")) as { password?: string };
+        if (payload.password === "secret-pass") {
+          authenticated = true;
+          return response({ authenticated: true });
+        }
+        return response({ message: "invalid password" }, 401);
+      }
       if (url.endsWith("/api/sessions")) {
         return response([]);
       }
@@ -51,6 +66,7 @@ beforeEach(() => {
       return response({});
     })
   );
+  authenticated = true;
 
   // jsdom doesn't ship ResizeObserver, matchMedia by default.
   if (!("ResizeObserver" in globalThis)) {
@@ -92,10 +108,26 @@ describe("App shell", () => {
       expect(summary.textContent).toContain("agent");
     });
   });
+
+  it("shows a password form before the dashboard and opens the app after login", async () => {
+    authenticated = false;
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByLabelText(/admin password/i)).toBeTruthy());
+
+    fireEvent.change(screen.getByLabelText(/admin password/i), {
+      target: { value: "secret-pass" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: /sign in/i }));
+
+    await waitFor(() => expect(screen.getByLabelText(/amesh home/i)).toBeTruthy());
+  });
 });
 
-function response(payload: unknown) {
+function response(payload: unknown, status = 200) {
   return {
+    ok: status >= 200 && status < 300,
+    status,
     async json() {
       return payload;
     }

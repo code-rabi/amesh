@@ -24,8 +24,11 @@ sh -n scripts/install-amesh-node.sh
 
 - The control plane stores SQLite data under `apps/server/data/`.
 - `corepack pnpm dev` starts both the control-plane server and the web app from the repo root.
+- Example env files live at `apps/server/.env.example` and `apps/web/.env.example`. Copy them to `apps/server/.env` and `apps/web/.env` when you want package-local settings.
 - In local development, the Vite app proxies `/api` and `/ws` to the control plane on `localhost:3001`, so the browser should be opened on the Vite origin instead of calling the server origin directly.
 - The server can serve built dashboard assets directly from `apps/web/dist`, which is the deployment path used by the single-image Docker setup.
+- Browser access now uses an admin password plus an HTTP-only session cookie. Set `AUTH_ADMIN_PASSWORD` for a stable local password; if it is missing, the server generates a one-process UUID password and writes it to the server log at startup.
+- Set `AUTH_SESSION_SECRET` if you want browser sessions to survive a server restart. If it is missing, the server generates a random in-memory secret and all cookies are invalidated on restart.
 - The server enforces `AMESH_REGISTRATION_TOKEN` when set. In local development, leaving it unset keeps registration open; in deployed environments it should be set explicitly.
 - The Go daemon expects an `agents.json` capabilities file for local agent definitions.
 - A starter node config lives at `examples/agents.json` and uses real ACPX targets: `claude`, `codex`, and `openclaw`.
