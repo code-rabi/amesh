@@ -16,6 +16,20 @@ let authenticated = true;
 let updateRequests = 0;
 let narrowLayout = false;
 let updateRequired = true;
+let topologyNodes = [
+  {
+    id: "node-1",
+    name: "lab-01",
+    host: "lab-01.local",
+    status: "online",
+    labels: [],
+    registeredAt: "",
+    lastSeenAt: null,
+    version: "v0.1.0",
+    latestVersion: "v0.1.1",
+    updateRequired: true
+  }
+];
 
 beforeEach(() => {
   vi.stubGlobal("WebSocket", vi.fn(() => socket));
@@ -51,20 +65,7 @@ beforeEach(() => {
       }
       if (url.endsWith("/api/topology")) {
         return response({
-          nodes: [
-            {
-              id: "node-1",
-              name: "lab-01",
-              host: "lab-01.local",
-              status: "online",
-              labels: [],
-              registeredAt: "",
-              lastSeenAt: null,
-              version: "v0.1.0",
-              latestVersion: "v0.1.1",
-              updateRequired
-            }
-          ],
+          nodes: topologyNodes.map((node) => ({ ...node, updateRequired })),
           agents: [
             {
               id: "agent-1",
@@ -85,6 +86,20 @@ beforeEach(() => {
   updateRequests = 0;
   narrowLayout = false;
   updateRequired = true;
+  topologyNodes = [
+    {
+      id: "node-1",
+      name: "lab-01",
+      host: "lab-01.local",
+      status: "online",
+      labels: [],
+      registeredAt: "",
+      lastSeenAt: null,
+      version: "v0.1.0",
+      latestVersion: "v0.1.1",
+      updateRequired: true
+    }
+  ];
 
   // jsdom doesn't ship ResizeObserver, matchMedia by default.
   if (!("ResizeObserver" in globalThis)) {
@@ -157,6 +172,17 @@ describe("App shell", () => {
       const input = screen.getByLabelText(/registration token/i) as HTMLInputElement;
       expect(input.value).toBe("server-registered-token");
     });
+    await waitFor(() =>
+      expect(screen.getByText(/REGISTRATION_TOKEN='server-registered-token'/i)).toBeTruthy()
+    );
+  });
+
+  it("loads the registration token into the empty-state install command", async () => {
+    topologyNodes = [];
+    window.history.pushState({}, "", "/");
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText(/the mesh is empty/i)).toBeTruthy());
     await waitFor(() =>
       expect(screen.getByText(/REGISTRATION_TOKEN='server-registered-token'/i)).toBeTruthy()
     );

@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-const TOKEN_PLACEHOLDER = "your-registration-token";
+import { fetchBootstrapConfig } from "../api.js";
 
 function snippet(serverUrl: string, token: string) {
   return `curl -fsSL https://raw.githubusercontent.com/code-rabi/amesh/main/install-amesh-node.sh \\
@@ -10,12 +10,31 @@ function snippet(serverUrl: string, token: string) {
 }
 
 export function EmptyState() {
+  const [token, setToken] = useState("");
   const [copied, setCopied] = useState(false);
   const serverOrigin =
     typeof window !== "undefined"
       ? window.location.origin.replace(/^http/, "ws") + "/ws?role=node"
       : "";
-  const command = snippet(serverOrigin, TOKEN_PLACEHOLDER);
+  const command = snippet(serverOrigin, token);
+
+  useEffect(() => {
+    let active = true;
+
+    void fetchBootstrapConfig()
+      .then((config) => {
+        if (!active) return;
+        setToken(config.registrationToken);
+      })
+      .catch(() => {
+        if (!active) return;
+        setToken("");
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   async function copy() {
     try {
