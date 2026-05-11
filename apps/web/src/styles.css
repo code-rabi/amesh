@@ -136,13 +136,15 @@ button:focus { outline: none; }
 }
 
 .wordmark {
-  font: 600 0.9375rem/1 var(--font-sans);
-  letter-spacing: 0.04em;
+  font: 600 0.875rem/1 var(--font-sans);
+  letter-spacing: 0.18em;
   color: var(--c-ink);
   text-decoration: none;
   display: inline-flex;
-  align-items: baseline;
-  gap: 4px;
+  align-items: center;
+  gap: 6px;
+  text-transform: uppercase;
+  font-feature-settings: "ss01" on, "cv11" on;
 }
 .wordmark::before {
   content: "";
@@ -150,7 +152,6 @@ button:focus { outline: none; }
   border-radius: 2px;
   background: var(--c-accent);
   display: inline-block;
-  transform: translateY(1px);
 }
 
 .routenav {

@@ -18,8 +18,8 @@ export function TopBar({ topology }: Props) {
 
   return (
     <header className="topbar">
-      <Link to="/" className="wordmark" aria-label="amesh home">
-        amesh
+      <Link to="/" className="wordmark" aria-label="AMESH home">
+        AMESH
       </Link>
 
       <nav className="routenav" aria-label="primary">
