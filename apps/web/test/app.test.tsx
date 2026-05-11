@@ -13,6 +13,9 @@ class MockSocket {
 
 const socket = new MockSocket();
 let authenticated = true;
+let updateRequests = 0;
+let narrowLayout = false;
+let updateRequired = true;
 
 beforeEach(() => {
   vi.stubGlobal("WebSocket", vi.fn(() => socket));
@@ -39,6 +42,10 @@ beforeEach(() => {
           registrationToken: "server-registered-token"
         });
       }
+      if (url.endsWith("/api/nodes/node-1/update")) {
+        updateRequests += 1;
+        return response({ ok: true });
+      }
       if (url.endsWith("/api/sessions")) {
         return response([]);
       }
@@ -52,7 +59,10 @@ beforeEach(() => {
               status: "online",
               labels: [],
               registeredAt: "",
-              lastSeenAt: null
+              lastSeenAt: null,
+              version: "v0.1.0",
+              latestVersion: "v0.1.1",
+              updateRequired
             }
           ],
           agents: [
@@ -72,6 +82,9 @@ beforeEach(() => {
     })
   );
   authenticated = true;
+  updateRequests = 0;
+  narrowLayout = false;
+  updateRequired = true;
 
   // jsdom doesn't ship ResizeObserver, matchMedia by default.
   if (!("ResizeObserver" in globalThis)) {
@@ -86,7 +99,13 @@ beforeEach(() => {
   }
   if (!window.matchMedia) {
     vi.stubGlobal("matchMedia", () => ({
-      matches: false,
+      matches: narrowLayout,
+      addEventListener() {},
+      removeEventListener() {}
+    }));
+  } else {
+    vi.stubGlobal("matchMedia", () => ({
+      matches: narrowLayout,
       addEventListener() {},
       removeEventListener() {}
     }));
@@ -141,6 +160,32 @@ describe("App shell", () => {
     await waitFor(() =>
       expect(screen.getByText(/REGISTRATION_TOKEN='server-registered-token'/i)).toBeTruthy()
     );
+  });
+
+  it("triggers a node update from the admin UI", async () => {
+    narrowLayout = true;
+    window.history.pushState({}, "", "/");
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: /update lab-01/i })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: /update lab-01/i }));
+
+    await waitFor(() => expect(updateRequests).toBe(1));
+    await waitFor(() =>
+      expect(screen.getByText(/update requested\. the node should reconnect after restart\./i)).toBeTruthy()
+    );
+  });
+
+  it("hides the node update action when the node is already current", async () => {
+    narrowLayout = true;
+    updateRequired = false;
+    window.history.pushState({}, "", "/");
+    render(<App />);
+
+    await waitFor(() =>
+      expect(screen.getByText(/drag-to-connect needs a wider screen/i)).toBeTruthy()
+    );
+    expect(screen.queryByRole("button", { name: /update lab-01/i })).toBeNull();
   });
 });
 

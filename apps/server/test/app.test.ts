@@ -13,7 +13,12 @@ describe("server app", () => {
   let authCookie = "";
 
   beforeEach(async () => {
-    app = buildApp({ dbPath: ":memory:", authPassword: "secret-pass", authSecret: "test-secret" });
+    app = buildApp({
+      dbPath: ":memory:",
+      authPassword: "secret-pass",
+      authSecret: "test-secret",
+      latestNodeVersion: "v0.1.1"
+    });
     await app.listen({ port: 0, host: "127.0.0.1" });
     const serverAddress = app.server.address() as AddressInfo | null;
     if (!serverAddress) {
@@ -107,7 +112,8 @@ describe("server app", () => {
   it("rejects registration with an invalid bootstrap token when one is configured", async () => {
     const guardedApp = buildApp({
       dbPath: ":memory:",
-      registrationToken: "expected-token"
+      registrationToken: "expected-token",
+      latestNodeVersion: "v0.1.1"
     });
     await guardedApp.listen({ port: 0, host: "127.0.0.1" });
     const guardedAddress = guardedApp.server.address() as AddressInfo | null;
@@ -154,7 +160,8 @@ describe("server app", () => {
       dbPath: ":memory:",
       registrationToken: "expected-token",
       authPassword: "secret-pass",
-      authSecret: "test-secret"
+      authSecret: "test-secret",
+      latestNodeVersion: "v0.1.1"
     });
     await guardedApp.listen({ port: 0, host: "127.0.0.1" });
     const guardedCookie = await loginCookie(guardedApp);
@@ -167,6 +174,29 @@ describe("server app", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ registrationToken: "expected-token" });
     await guardedApp.close();
+  });
+
+  it("marks topology nodes as requiring update when their reported version trails the latest release", async () => {
+    const socket = new WebSocket(`ws://${address}/ws?role=node&nodeId=node-1`);
+    await waitForOpen(socket);
+    socket.send(JSON.stringify(registerNode("node-1", "a", "v0.1.0")));
+    await readNodeMessage(socket);
+    await waitForIdle();
+
+    const response = await injectAuthed(app, authCookie, {
+      method: "GET",
+      url: "/api/topology"
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().nodes).toEqual([
+      expect.objectContaining({
+        id: "node-1",
+        version: "v0.1.0",
+        latestVersion: "v0.1.1",
+        updateRequired: true
+      })
+    ]);
+    socket.close();
   });
 
   it("resumes a registered node with a reconnect token and keeps routing sessions", async () => {
@@ -547,7 +577,7 @@ describe("server app", () => {
     await writeFile(join(staticRoot, "index.html"), "<html><body>amesh ui</body></html>");
     await writeFile(join(staticRoot, "app.js"), "console.log('amesh')");
 
-    const staticApp = buildApp({ dbPath: ":memory:", staticRoot });
+    const staticApp = buildApp({ dbPath: ":memory:", staticRoot, latestNodeVersion: "v0.1.1" });
     const root = await staticApp.inject({
       method: "GET",
       url: "/"
@@ -596,9 +626,56 @@ describe("server app", () => {
     });
     expect(rules.json()).toEqual([]);
   });
+
+  it("sends an update command to an online node through the admin API", async () => {
+    const socket = new WebSocket(`ws://${address}/ws?role=node&nodeId=node-1`);
+    await waitForOpen(socket);
+    socket.send(JSON.stringify(registerNode("node-1", "a")));
+    await readNodeMessage(socket);
+    socket.send(
+      JSON.stringify(syncCapabilities("node-1", [{ id: "agent-a", name: "A", acpxAgent: "a" }]))
+    );
+    await waitForIdle();
+
+    const response = await injectAuthed(app, authCookie, {
+      method: "POST",
+      url: "/api/nodes/node-1/update"
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ ok: true });
+
+    const updateMessage = await readNodeMessage(socket);
+    expect(updateMessage).toMatchObject({
+      type: "node.update",
+      source: "server",
+      target: "node-1",
+      payload: {
+        nodeId: "node-1"
+      }
+    });
+    socket.close();
+  });
+
+  it("rejects update commands for offline nodes", async () => {
+    const socket = new WebSocket(`ws://${address}/ws?role=node&nodeId=node-1`);
+    await waitForOpen(socket);
+    socket.send(JSON.stringify(registerNode("node-1", "a")));
+    await readNodeMessage(socket);
+    socket.close();
+    await waitForIdle();
+
+    const response = await injectAuthed(app, authCookie, {
+      method: "POST",
+      url: "/api/nodes/node-1/update"
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({
+      message: "node must be online to update"
+    });
+  });
 });
 
-function registerNode(nodeId: string, name: string) {
+function registerNode(nodeId: string, name: string, version: string | null = null) {
   return {
     type: "node.register",
     requestId: `register-${nodeId}`,
@@ -609,7 +686,8 @@ function registerNode(nodeId: string, name: string) {
       registrationToken: "token",
       nodeName: name,
       host: `${name}.example`,
-      labels: []
+      labels: [],
+      version
     }
   };
 }

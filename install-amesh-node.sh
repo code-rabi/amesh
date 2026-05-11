@@ -199,6 +199,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 Environment=AMESH_ACPX_PATH=$ACPX_BIN
+Environment=AMESH_NODE_VERSION=$tag
 ExecStart=$binary_path run --state $STATE_PATH
 Restart=always
 RestartSec=5

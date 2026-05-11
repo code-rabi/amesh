@@ -5,6 +5,7 @@ import type {
   InvocationRequestPayload,
   NodeHeartbeatPayload,
   NodeRegistrationPayload,
+  NodeResumePayload,
   ProtocolEnvelope,
   SessionEventRecord,
   SessionInputPayload,
@@ -20,6 +21,7 @@ import {
   invocationRequestPayloadSchema,
   nodeHeartbeatPayloadSchema,
   nodeRegistrationPayloadSchema,
+  nodeResumePayloadSchema,
   parseProtocolEnvelope,
   sessionEventSchema,
   sessionInputPayloadSchema,
@@ -53,6 +55,8 @@ type AppOptions = {
   staticRoot?: string;
   authPassword?: string;
   authSecret?: string;
+  nodeRepo?: string;
+  latestNodeVersion?: string | null;
 };
 
 type NodeSocket = {
@@ -71,13 +75,18 @@ export function buildApp(options: AppOptions = {}) {
   const repository = new Repository(db);
   const registrationToken =
     options.registrationToken ?? process.env.AMESH_REGISTRATION_TOKEN ?? "";
+  const nodeRepo = options.nodeRepo ?? process.env.AMESH_REPO ?? "code-rabi/amesh";
+  const fixedLatestNodeVersion = options.latestNodeVersion;
   const authConfig = resolveAuthConfig({
     password: options.authPassword,
     secret: options.authSecret
   });
   const browserSockets = new Set<WebSocket>();
   const nodeSockets = new Map<string, NodeSocket>();
+  const nodeVersions = new Map<string, string | null>();
   const websocketServer = new WebSocketServer({ noServer: true });
+  let latestVersionCache: { value: string | null; fetchedAt: number; pending: Promise<string | null> | null } =
+    { value: null, fetchedAt: 0, pending: null };
 
   function isAuthenticated(cookieValue: string | undefined) {
     return verifySession(authConfig, cookieValue) !== null;
@@ -90,8 +99,66 @@ export function buildApp(options: AppOptions = {}) {
     reply.code(401).send({ message: "authentication required" });
   }
 
+  function updateRequired(version: string | null | undefined, latestVersion: string | null) {
+    return Boolean(version && latestVersion && version !== latestVersion);
+  }
+
+  async function fetchLatestNodeVersion() {
+    if (fixedLatestNodeVersion !== undefined) {
+      return fixedLatestNodeVersion;
+    }
+
+    const now = Date.now();
+    if (latestVersionCache.pending) {
+      return latestVersionCache.pending;
+    }
+    if (latestVersionCache.fetchedAt !== 0 && now-latestVersionCache.fetchedAt < 5 * 60 * 1000) {
+      return latestVersionCache.value;
+    }
+
+    latestVersionCache.pending = fetch(`https://api.github.com/repos/${nodeRepo}/releases/latest`, {
+      headers: {
+        accept: "application/vnd.github+json"
+      }
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`github release lookup failed: ${response.status}`);
+        }
+        const body = (await response.json()) as { tag_name?: unknown };
+        const tag = typeof body.tag_name === "string" ? body.tag_name.trim() : "";
+        return tag || null;
+      })
+      .catch(() => latestVersionCache.value)
+      .finally(() => {
+        latestVersionCache.pending = null;
+        latestVersionCache.fetchedAt = Date.now();
+      });
+
+    const value = await latestVersionCache.pending;
+    latestVersionCache.value = value;
+    return value;
+  }
+
+  async function topologySnapshot() {
+    const snapshot = repository.listTopology();
+    const latestVersion = await fetchLatestNodeVersion();
+    return topologySnapshotSchema.parse({
+      ...snapshot,
+      nodes: snapshot.nodes.map((node) => {
+        const version = nodeVersions.get(node.id) ?? null;
+        return {
+          ...node,
+          version,
+          latestVersion,
+          updateRequired: updateRequired(version, latestVersion)
+        };
+      })
+    });
+  }
+
   async function broadcastTopology() {
-    const snapshot = topologySnapshotSchema.parse(repository.listTopology());
+    const snapshot = await topologySnapshot();
     const message = browserRealtimeEventSchema.parse({
       type: "topology.updated",
       payload: snapshot
@@ -149,10 +216,15 @@ export function buildApp(options: AppOptions = {}) {
   function bindSocket(socket: WebSocket, role: Role | null, nodeId: string | null) {
     if (role === "browser") {
       browserSockets.add(socket);
-      websocketSend(socket, {
-        type: "topology.snapshot",
-        payload: repository.listTopology()
-      } satisfies BrowserRealtimeEvent);
+      void topologySnapshot().then((snapshot) => {
+        if (socket.readyState !== WebSocket.OPEN) {
+          return;
+        }
+        websocketSend(socket, {
+          type: "topology.snapshot",
+          payload: snapshot
+        } satisfies BrowserRealtimeEvent);
+      });
       socket.on("close", () => {
         browserSockets.delete(socket);
       });
@@ -184,6 +256,7 @@ export function buildApp(options: AppOptions = {}) {
               host: payload.host,
               labels: payload.labels
             });
+            nodeVersions.set(node.id, payload.version ?? null);
             boundNodeId = node.id;
             nodeSockets.set(node.id, {
               nodeId: node.id,
@@ -202,10 +275,9 @@ export function buildApp(options: AppOptions = {}) {
             break;
           }
           case "node.resume": {
-            const payload = envelope.payload as {
-              nodeId?: string;
-              reconnectToken?: string;
-            };
+            const payload = nodeResumePayloadSchema.parse(
+              envelope.payload
+            ) as NodeResumePayload;
             if (!payload.nodeId || !payload.reconnectToken) {
               websocketSend(socket, {
                 type: "node.resume.denied",
@@ -234,6 +306,7 @@ export function buildApp(options: AppOptions = {}) {
             }
 
             boundNodeId = node.id;
+            nodeVersions.set(node.id, payload.version ?? null);
             nodeSockets.set(node.id, {
               nodeId: node.id,
               send(message) {
@@ -434,7 +507,7 @@ export function buildApp(options: AppOptions = {}) {
     return { authenticated: false };
   });
 
-  app.get("/api/nodes", { preHandler: requireBrowserAuth }, async () => repository.listTopology().nodes);
+  app.get("/api/nodes", { preHandler: requireBrowserAuth }, async () => (await topologySnapshot()).nodes);
   app.get("/api/agents", { preHandler: requireBrowserAuth }, async () => repository.listTopology().agents);
   app.get("/api/bootstrap", { preHandler: requireBrowserAuth }, async () => ({
     registrationToken
@@ -443,8 +516,36 @@ export function buildApp(options: AppOptions = {}) {
     repository.listTopology().triggerRules
   );
   app.get("/api/topology", { preHandler: requireBrowserAuth }, async () =>
-    topologySnapshotSchema.parse(repository.listTopology())
+    topologySnapshot()
   );
+  app.post("/api/nodes/:nodeId/update", { preHandler: requireBrowserAuth }, async (request, reply) => {
+    const params = request.params as { nodeId: string };
+    const node = repository.findNode(params.nodeId);
+    if (!node) {
+      reply.code(404);
+      return { message: "node not found" };
+    }
+    if (node.status !== "online") {
+      reply.code(409);
+      return { message: "node must be online to update" };
+    }
+    if (!nodeSockets.has(node.id)) {
+      reply.code(409);
+      return { message: "node socket is not connected" };
+    }
+
+    sendToNode(node.id, {
+      type: "node.update",
+      requestId: nanoid(10),
+      sessionId: null,
+      source: "server",
+      target: node.id,
+      payload: {
+        nodeId: node.id
+      }
+    });
+    return { ok: true };
+  });
   app.get("/api/sessions", { preHandler: requireBrowserAuth }, async () => repository.listSessions());
   app.get("/api/sessions/:sessionId", { preHandler: requireBrowserAuth }, async (request, reply) => {
     const state = repository.getSession((request.params as { sessionId: string }).sessionId);

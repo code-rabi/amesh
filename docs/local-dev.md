@@ -105,3 +105,6 @@ The installer writes a durable state file after registration, installs a managed
 ```bash
 amesh-node update
 ```
+
+Authenticated admins can also trigger the same node-side updater from the dashboard. The control plane sends a `node.update` command over the existing node websocket, the daemon runs `amesh-node update`, and a managed systemd service should restart back into the new binary after the process exits.
+- The dashboard only shows the update action when the node reports an installed release tag and that tag differs from the control plane's latest known GitHub release tag.

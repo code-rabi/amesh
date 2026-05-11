@@ -31,7 +31,10 @@ export const nodeSchema = z.object({
   host: z.string(),
   labels: z.array(z.string()),
   registeredAt: z.string(),
-  lastSeenAt: z.string().nullable()
+  lastSeenAt: z.string().nullable(),
+  version: z.string().nullable().default(null),
+  latestVersion: z.string().nullable().default(null),
+  updateRequired: z.boolean().default(false)
 });
 export type NodeRecord = z.infer<typeof nodeSchema>;
 
@@ -107,11 +110,19 @@ export const nodeRegistrationPayloadSchema = z.object({
   registrationToken: z.string(),
   nodeName: z.string(),
   host: z.string(),
-  labels: z.array(z.string()).default([])
+  labels: z.array(z.string()).default([]),
+  version: z.string().nullable().default(null)
 });
 export type NodeRegistrationPayload = z.infer<
   typeof nodeRegistrationPayloadSchema
 >;
+
+export const nodeResumePayloadSchema = z.object({
+  nodeId: z.string(),
+  reconnectToken: z.string(),
+  version: z.string().nullable().default(null)
+});
+export type NodeResumePayload = z.infer<typeof nodeResumePayloadSchema>;
 
 export const nodeHeartbeatPayloadSchema = z.object({
   nodeId: z.string(),

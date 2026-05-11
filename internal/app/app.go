@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"sync"
@@ -37,6 +38,8 @@ type sleeper func(ctx context.Context, delay time.Duration) error
 
 type capabilityProber func(ctx context.Context, agent nodeconfig.AgentConfig) bool
 
+type updateRunner func(ctx context.Context, stdout, stderr io.Writer) error
+
 type retryableDaemonError struct {
 	err error
 }
@@ -51,6 +54,10 @@ func (err retryableDaemonError) Unwrap() error {
 
 // Run executes the node daemon CLI.
 func Run(ctx context.Context, args []string) error {
+	return run(ctx, args, runUpdate)
+}
+
+func run(ctx context.Context, args []string, update updateRunner) error {
 	if len(args) == 0 {
 		return errors.New("expected subcommand: register, run, update, or acp")
 	}
@@ -59,9 +66,9 @@ func Run(ctx context.Context, args []string) error {
 	case "register":
 		return runRegister(ctx, args[1:])
 	case "run":
-		return runDaemon(ctx, args[1:])
+		return runDaemon(ctx, args[1:], update)
 	case "update":
-		return runUpdate(ctx, os.Stdout, os.Stderr)
+		return update(ctx, os.Stdout, os.Stderr)
 	case "acp":
 		return runACPBridge(ctx, args[1:], os.Stdin, os.Stdout)
 	default:
@@ -168,6 +175,7 @@ func runRegister(ctx context.Context, args []string) error {
 			"nodeName":          config.NodeName,
 			"host":              hostname(),
 			"labels":            []string{"local"},
+			"version":           currentVersion(),
 		},
 	})
 	if err != nil {
@@ -196,7 +204,7 @@ func runRegister(ctx context.Context, args []string) error {
 	})
 }
 
-func runDaemon(ctx context.Context, args []string) error {
+func runDaemon(ctx context.Context, args []string, update updateRunner) error {
 	flags := flag.NewFlagSet("run", flag.ContinueOnError)
 	serverURL := flags.String("server", "ws://localhost:3001/ws?role=node", "control plane websocket URL")
 	nodeID := flags.String("node-id", "", "persistent node ID")
@@ -251,6 +259,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		},
 		probeAgentHealth(acpx.Runner{}),
 		sleepWithContext,
+		update,
 	)
 }
 
@@ -348,11 +357,23 @@ func runDaemonLoop(
 	clientFactory daemonClientFactory,
 	probe capabilityProber,
 	sleep sleeper,
+	update updateRunner,
 ) error {
 	backoff := time.Second
 
 	for {
-		err := runDaemonSession(ctx, serverURL, nodeID, reconnectToken, config, runner, sessions, clientFactory, probe)
+		err := runDaemonSession(
+			ctx,
+			serverURL,
+			nodeID,
+			reconnectToken,
+			config,
+			runner,
+			sessions,
+			clientFactory,
+			probe,
+			update,
+		)
 		if err == nil || errors.Is(err, context.Canceled) {
 			return nil
 		}
@@ -384,6 +405,7 @@ func runDaemonSession(
 	sessions *sessionStore,
 	clientFactory daemonClientFactory,
 	probe capabilityProber,
+	update updateRunner,
 ) error {
 	client := clientFactory(serverURL + "&nodeId=" + nodeID)
 	if err := client.Connect(ctx); err != nil {
@@ -401,6 +423,7 @@ func runDaemonSession(
 		Payload: map[string]any{
 			"nodeId":         nodeID,
 			"reconnectToken": reconnectToken,
+			"version":        currentVersion(),
 		},
 	}); err != nil {
 		return retryableDaemonError{err: err}
@@ -446,6 +469,11 @@ func runDaemonSession(
 			if err := cancelSession(sessionCtx, client, sessions, nodeID, envelope); err != nil {
 				return retryableDaemonError{err: err}
 			}
+		case "node.update":
+			if err := update(sessionCtx, os.Stdout, os.Stderr); err != nil {
+				return fmt.Errorf("node update failed: %w", err)
+			}
+			return nil
 		}
 	}
 }
@@ -540,6 +568,22 @@ func hostname() string {
 		return "unknown-host"
 	}
 	return name
+}
+
+func currentVersion() string {
+	if version := strings.TrimSpace(os.Getenv("AMESH_NODE_VERSION")); version != "" {
+		return version
+	}
+
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return ""
+	}
+	version := strings.TrimSpace(info.Main.Version)
+	if version == "" || version == "(devel)" {
+		return ""
+	}
+	return version
 }
 
 func envList(values map[string]string) []string {

@@ -1,6 +1,7 @@
 import type { TopologySnapshot } from "@amesh/protocol";
 
 import { relativeTime } from "../lib/time.js";
+import { NodeUpdateButton } from "./NodeUpdateButton.js";
 
 type Props = { topology: TopologySnapshot };
 
@@ -31,7 +32,10 @@ export function NarrowFallback({ topology }: Props) {
                 <h3>{node.name}</h3>
                 <div className="host">{node.host}</div>
               </div>
-              <span className={`pill pill-${node.status}`}>{node.status}</span>
+              <div className="narrow-card__meta">
+                <span className={`pill pill-${node.status}`}>{node.status}</span>
+                <NodeUpdateButton node={node} compact />
+              </div>
             </header>
 
             {node.status === "offline" ? (

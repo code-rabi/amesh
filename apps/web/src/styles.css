@@ -536,6 +536,11 @@ button:focus { outline: none; }
   align-items: start;
   border-bottom: 1px solid var(--c-line);
 }
+.node-card__meta {
+  display: grid;
+  justify-items: end;
+  gap: var(--s-2);
+}
 .node-card__name {
   margin: 0;
   font: var(--t-title);
@@ -598,6 +603,43 @@ button:focus { outline: none; }
   font: var(--t-body);
   color: var(--c-mute);
   font-style: italic;
+}
+
+.node-update {
+  display: grid;
+  gap: 4px;
+}
+.node-update--compact {
+  justify-items: end;
+}
+.node-update__button {
+  font: var(--t-label);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 5px 8px;
+  border: 1px solid var(--c-line);
+  background: var(--c-surface);
+  color: var(--c-mute);
+  border-radius: var(--r-xs);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+.node-update__button:hover:not([disabled]) {
+  color: var(--c-ink);
+  background: var(--c-surface-raised);
+  border-color: var(--c-line-strong);
+}
+.node-update__button[disabled] {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.node-update__message {
+  max-width: 24ch;
+  font: var(--t-label);
+  letter-spacing: 0.04em;
+  color: var(--c-mute);
+  text-align: right;
 }
 
 /* React Flow handles — agent source (right) + target (left)        */
@@ -1985,6 +2027,11 @@ button:focus { outline: none; }
   grid-template-columns: 1fr auto;
   gap: var(--s-2);
   align-items: baseline;
+}
+.narrow-card__meta {
+  display: grid;
+  justify-items: end;
+  gap: var(--s-2);
 }
 .narrow-card h3 { margin: 0; font: var(--t-title); }
 .narrow-card .host { font: var(--t-mono); font-size: 0.75rem; color: var(--c-mute); }

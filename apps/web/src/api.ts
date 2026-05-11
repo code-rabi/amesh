@@ -65,6 +65,16 @@ export async function fetchBootstrapConfig(): Promise<{ registrationToken: strin
   return response.json();
 }
 
+export async function requestNodeUpdate(nodeId: string): Promise<void> {
+  const response = await apiFetch(`/api/nodes/${nodeId}/update`, {
+    method: "POST"
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(body?.message ?? "Update request failed");
+  }
+}
+
 export async function createTriggerRule(input: {
   sourceAgentId: string;
   targetAgentId: string;

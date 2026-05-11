@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"io"
 	"slices"
 	"sync"
 	"testing"
@@ -82,6 +83,10 @@ func TestRunDaemonLoopReconnectsAfterDisconnect(t *testing.T) {
 				}
 				return nil
 			},
+			func(context.Context, io.Writer, io.Writer) error {
+				t.Fatal("unexpected update invocation")
+				return nil
+			},
 		)
 	}()
 
@@ -103,6 +108,57 @@ func TestRunDaemonLoopReconnectsAfterDisconnect(t *testing.T) {
 	assertEnvelopeTypes(t, second.sent, []string{"node.resume", "node.capabilities.sync"})
 }
 
+func TestRunDispatchesUpdateSubcommand(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	err := run(context.Background(), []string{"update"}, func(context.Context, io.Writer, io.Writer) error {
+		called = true
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	if !called {
+		t.Fatal("expected update runner to be called")
+	}
+}
+
+func TestRunDaemonSessionHandlesNodeUpdate(t *testing.T) {
+	t.Parallel()
+
+	client := &fakeDaemonClient{
+		readResults: []fakeReadResult{
+			{envelope: nodeclient.Envelope{Type: "node.resumed"}},
+			{envelope: nodeclient.Envelope{Type: "node.update"}},
+		},
+	}
+
+	called := false
+	err := runDaemonSession(
+		context.Background(),
+		"ws://example.invalid/ws?role=node",
+		"node-a",
+		"token-a",
+		nodeconfig.File{},
+		acpx.Runner{},
+		newSessionStore(),
+		func(string) daemonClient { return client },
+		func(context.Context, nodeconfig.AgentConfig) bool { return true },
+		func(context.Context, io.Writer, io.Writer) error {
+			called = true
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("runDaemonSession() error = %v", err)
+	}
+	if !called {
+		t.Fatal("expected update runner to be called")
+	}
+	assertEnvelopeTypes(t, client.sent, []string{"node.resume", "node.capabilities.sync"})
+}
+
 func TestFilterHealthyAgents(t *testing.T) {
 	t.Parallel()
 
@@ -121,11 +177,11 @@ func TestFilterHealthyAgents(t *testing.T) {
 }
 
 type fakeDaemonClient struct {
-	mu                     sync.Mutex
-	connectErr             error
-	readResults            []fakeReadResult
+	mu                      sync.Mutex
+	connectErr              error
+	readResults             []fakeReadResult
 	blockReadsUntilCanceled bool
-	sent                   []nodeclient.Envelope
+	sent                    []nodeclient.Envelope
 }
 
 type fakeReadResult struct {

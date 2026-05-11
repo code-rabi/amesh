@@ -39,7 +39,10 @@ export class Repository {
       labels: input.labels,
       status: "online",
       registeredAt: new Date().toISOString(),
-      lastSeenAt: new Date().toISOString()
+      lastSeenAt: new Date().toISOString(),
+      version: null,
+      latestVersion: null,
+      updateRequired: false
     };
 
     this.db
@@ -79,6 +82,27 @@ export class Repository {
       .where(eq(nodesTable.id, nodeId))
       .get();
     return row?.reconnectToken ?? null;
+  }
+
+  findNode(nodeId: string) {
+    const row = this.db
+      .select()
+      .from(nodesTable)
+      .where(eq(nodesTable.id, nodeId))
+      .get();
+    if (!row) {
+      return null;
+    }
+
+    return nodeSchema.parse({
+      id: row.id,
+      name: row.name,
+      status: row.status,
+      host: row.host,
+      labels: parseJson<string[]>(row.labels),
+      registeredAt: row.registeredAt,
+      lastSeenAt: row.lastSeenAt ?? null
+    });
   }
 
   resumeNode(nodeId: string, reconnectToken: string, observedAt: string) {

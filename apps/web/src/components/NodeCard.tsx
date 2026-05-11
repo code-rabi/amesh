@@ -3,6 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 
 import type { AgentRecord, AgentStatus, NodeRecord, NodeStatus } from "@amesh/protocol";
 import { relativeTime } from "../lib/time.js";
+import { NodeUpdateButton } from "./NodeUpdateButton.js";
 
 export type NodeCardData = {
   node: NodeRecord;
@@ -47,7 +48,12 @@ export function NodeCard({ data }: NodeCardProps) {
             <div className="node-card__lastseen">Waiting for first heartbeat.</div>
           ) : null}
         </div>
-        <span className={nodePill(node.status)}>{nodePillLabel(node.status)}</span>
+        <div className="node-card__meta">
+          <span className={nodePill(node.status)}>{nodePillLabel(node.status)}</span>
+          <div onPointerDown={(event) => event.stopPropagation()}>
+            <NodeUpdateButton node={node} compact />
+          </div>
+        </div>
       </div>
 
       {agents.length === 0 ? (
