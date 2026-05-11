@@ -61,15 +61,22 @@ Responsibilities:
 
 Suggested stack:
 
-- Node.js + TypeScript
-- `ws` client
-- local process management with `child_process`
-- `acpx` as the preferred ACP adapter layer
+- Go
+- `github.com/coder/websocket` or equivalent minimal WebSocket client
+- local process management via `os/exec`
+- `acpx` as the preferred external ACP adapter CLI
 
-Why `acpx`:
+Why Go:
 
-- it already exposes a structured ACP client runtime for agents like Codex, Claude, OpenClaw, and others
-- it reduces the need to scrape TTY output or implement ACP session semantics from scratch
+- a single static binary is a much better fit for remote node deployment than a Node runtime plus dependencies
+- process supervision, reconnect logic, and long-lived socket handling are straightforward
+- cross-compilation is simple, which matters if nodes run on mixed Linux hosts
+
+Why keep `acpx`, but out of process:
+
+- it already provides ACP-compatible agent access for Codex, Claude, OpenClaw, and others
+- the daemon can invoke `acpx` as a subprocess and normalize its streamed output instead of embedding a JavaScript runtime
+- this keeps the node runtime small while isolating upstream `acpx` changes behind one adapter boundary
 
 ### 3. Web UI
 
@@ -197,7 +204,7 @@ npx amesh-node register \
 1. User opens the dashboard and selects an agent.
 2. UI creates a session through the control plane.
 3. Server routes the prompt to the node hosting that agent.
-4. Node executes the request against the local ACP agent via `acpx`.
+4. Node executes the request against the local ACP agent by spawning `acpx`.
 5. Streamed ACP output is normalized into session events and pushed back to the UI.
 
 ### Cross-Agent Trigger
@@ -227,7 +234,7 @@ apps/
   web/
 packages/
   protocol/
-  node-daemon/
+  node-daemon-go/
   agent-runtime/
 docs/
   design/
@@ -245,7 +252,7 @@ The nodes are infrastructure processes, not short-lived CLI calls. Persistent We
 
 ### Normalize ACP Events
 
-Different agents expose different event shapes. The node daemon should map local ACP output into a stable internal event model before sending it to the server. That keeps the UI and routing logic provider-agnostic.
+Different agents expose different event shapes. The node daemon should map `acpx` CLI output or other local ACP output into a stable internal event model before sending it to the server. That keeps the UI and routing logic provider-agnostic.
 
 ### Prefer SPA Assets Over Framework-Coupled SSR
 
@@ -254,7 +261,7 @@ The future `zero-native` target expects a local asset tree or URL. A Vite-built 
 ## Risks
 
 1. ACP event models differ enough that normalization may need provider-specific adapters.
-2. `acpx` is still early, so version pinning and adapter isolation matter.
+2. `acpx` is still early, so version pinning and subprocess adapter isolation matter.
 3. Agent-to-agent invocation semantics need a strict schema, or routing becomes hard to reason about.
 4. SQLite is acceptable for MVP but not for high-volume event retention.
 
@@ -264,6 +271,7 @@ The future `zero-native` target expects a local asset tree or URL. A Vite-built 
 2. Do we want the first bootstrap token to be single-use or reusable per environment?
 3. Should the UI expose raw ACP traffic from day one, or only normalized chat events?
 4. Do we want agent definitions to be fully managed in the UI, or initially declared only on the node?
+5. Should the Go daemon require `acpx` preinstalled, or should it manage downloading a pinned compatible binary?
 
 ## MVP Acceptance Criteria
 
