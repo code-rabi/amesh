@@ -98,7 +98,7 @@ function chunkText(payload: Record<string, unknown>): string {
   return "";
 }
 
-export function buildMessages(session: SessionView): ThreadMessageLike[] {
+function buildMessages(session: SessionView): ThreadMessageLike[] {
   const state: { running: RunningMessage | null; messages: ThreadMessageLike[] } = {
     running: null,
     messages: []

@@ -11,7 +11,7 @@ function hash(input: string): number {
   return Math.abs(h);
 }
 
-export function agentHue(id: string): number {
+function agentHue(id: string): number {
   return HUES[hash(id) % HUES.length] ?? 55;
 }
 

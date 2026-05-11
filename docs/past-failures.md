@@ -6,6 +6,12 @@
 - Consequence: `pnpm --filter @amesh/server smoke` crashed before it could validate the MVP path, even though the rest of the JS test suite stayed green.
 - Mitigation: the smoke flow now logs in first, and the root `corepack pnpm check` gate includes smoke so GitHub Actions catches the same regression path.
 
+## 2026-05-11: Quality checks covered behavior better than structural drift
+
+- The repo had behavior checks, but nothing blocked merges for unused TypeScript surface area or repo-level architecture rule regressions.
+- Consequence: dead dependencies, stale exports, and structural erosion could accumulate without showing up as independent PR checks.
+- Mitigation: `knip` now runs as a dedicated unused-code gate, and `sentrux` runs as a separate architecture check backed by `.sentrux/rules.toml`.
+
 ## 2026-05-11: Missing Go toolchain in local automation
 
 - The workspace initially lacked a preinstalled Go toolchain, which blocked daemon compile and runtime verification.
