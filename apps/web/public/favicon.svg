@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="AMESH">
+  <rect width="64" height="64" rx="12" fill="oklch(98.4% 0.006 60)" />
+  <path
+    d="M32 12 48 52H39.5l-3.2-8.7H27.7L24.5 52H16L32 12Zm1.2 23.8-1.2-3.3-1.2 3.3h2.4Z"
+    fill="oklch(58% 0.14 55)"
+  />
+</svg>

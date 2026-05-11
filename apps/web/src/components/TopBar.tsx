@@ -3,6 +3,7 @@ import { useState } from "react";
 
 import type { TopologySnapshot } from "@amesh/protocol";
 import { AddNodePanel } from "./AddNodePanel.js";
+import { BrandWordmark } from "./BrandWordmark.js";
 
 type Props = {
   topology: TopologySnapshot;
@@ -15,7 +16,7 @@ export function TopBar({ topology }: Props) {
     <header className="topbar">
       <div className="topbar__identity">
         <Link to="/" className="wordmark" aria-label="AMESH home">
-          AMESH
+          <BrandWordmark />
         </Link>
       </div>
 
