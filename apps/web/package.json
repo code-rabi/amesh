@@ -15,6 +15,7 @@
     "@amesh/protocol": "workspace:*",
     "@assistant-ui/react": "^0.14.0",
     "@assistant-ui/react-markdown": "^0.14.0",
+    "lucide-react": "^0.511.0",
     "@tanstack/react-router": "^1.169.2",
     "@types/dompurify": "^3.2.0",
     "@xyflow/react": "^12.10.2",

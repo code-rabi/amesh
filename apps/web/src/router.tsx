@@ -5,6 +5,7 @@ import {
   createRouter
 } from "@tanstack/react-router";
 
+import { AppSidebar } from "./components/AppSidebar.js";
 import { ErrorBanner } from "./components/ErrorBanner.js";
 import { TopBar } from "./components/TopBar.js";
 import { useTopology } from "./lib/topologyContext.js";
@@ -19,7 +20,12 @@ function Shell() {
       {connection === "disconnected" ? (
         <ErrorBanner message="Lost connection to control plane. Retrying." />
       ) : null}
-      <Outlet />
+      <div className="shell__body">
+        <AppSidebar />
+        <main className="shell__main">
+          <Outlet />
+        </main>
+      </div>
     </div>
   );
 }
