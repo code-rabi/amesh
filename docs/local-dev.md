@@ -33,6 +33,7 @@ sh -n scripts/install-amesh-node.sh
 - The Go daemon expects an `agents.json` capabilities file for local agent definitions.
 - A starter node config lives at `examples/agents.json` and uses real ACPX targets: `claude`, `codex`, and `openclaw`.
 - `corepack pnpm dev:daemon` installs a managed ACPX sidecar under `~/.local/share/amesh/acpx` if needed, registers `node-a` on first run, saves `.amesh-node-state.json`, and then starts the long-lived daemon process against `examples/agents.json`.
+- The daemon now keeps running when the control plane goes away. It retries websocket connect, `node.resume`, and capability sync with backoff until the server returns.
 - `install-amesh-node.sh` downloads the released `amesh-node` binary for the current platform, installs a managed ACPX sidecar under `~/.local/share/amesh/acpx`, and exports `AMESH_ACPX_PATH` for the service.
 - Remote node install no longer requires `go`; it still requires `curl`, `tar`, `npm`, and the actual local agent CLIs you want ACPX to call.
 - The server websocket tests bind a local port, so restricted sandboxes may require escalation for that package-level verification.

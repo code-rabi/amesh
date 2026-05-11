@@ -21,6 +21,30 @@ import (
 	"github.com/NitayRabi/amesh/internal/nodestate"
 )
 
+type daemonClient interface {
+	Connect(ctx context.Context) error
+	Close() error
+	Send(ctx context.Context, envelope nodeclient.Envelope) error
+	Read(ctx context.Context) (nodeclient.Envelope, error)
+	HeartbeatLoop(ctx context.Context, nodeID string) error
+}
+
+type daemonClientFactory func(serverURL string) daemonClient
+
+type sleeper func(ctx context.Context, delay time.Duration) error
+
+type retryableDaemonError struct {
+	err error
+}
+
+func (err retryableDaemonError) Error() string {
+	return err.err.Error()
+}
+
+func (err retryableDaemonError) Unwrap() error {
+	return err.err
+}
+
 // Run executes the node daemon CLI.
 func Run(ctx context.Context, args []string) error {
 	if len(args) == 0 {
@@ -180,71 +204,26 @@ func runDaemon(ctx context.Context, args []string) error {
 		return err
 	}
 
-	client := nodeclient.New(*serverURL + "&nodeId=" + *nodeID)
-	if err := client.Connect(ctx); err != nil {
-		return err
-	}
-
-	if err := client.Send(ctx, nodeclient.Envelope{
-		Type:      "node.resume",
-		RequestID: fmt.Sprintf("resume-%d", time.Now().UnixNano()),
-		Source:    *nodeID,
-		Target:    "server",
-		Payload: map[string]any{
-			"nodeId":         *nodeID,
-			"reconnectToken": *reconnectToken,
-		},
-	}); err != nil {
-		return err
-	}
-	reply, err := client.Read(ctx)
-	if err != nil {
-		return err
-	}
-	if reply.Type != "node.resumed" {
-		return fmt.Errorf("unexpected resume reply %q", reply.Type)
-	}
-
-	if err := client.Send(ctx, nodeclient.Envelope{
-		Type:      "node.capabilities.sync",
-		RequestID: fmt.Sprintf("sync-%d", time.Now().UnixNano()),
-		Source:    *nodeID,
-		Target:    "server",
-		Payload: map[string]any{
-			"nodeId":       *nodeID,
-			"capabilities": config.Agents,
-		},
-	}); err != nil {
-		return err
-	}
-
-	go func() {
-		_ = client.HeartbeatLoop(ctx, *nodeID)
-	}()
-
 	runner := acpx.Runner{}
 	sessions := newSessionStore()
-	for {
-		envelope, err := client.Read(ctx)
-		if err != nil {
-			return err
-		}
-		switch envelope.Type {
-		case "session.start", "session.input":
-			if err := startSession(ctx, client, runner, sessions, config, *nodeID, envelope); err != nil {
-				return err
-			}
-		case "session.cancel":
-			if err := cancelSession(ctx, client, sessions, *nodeID, envelope); err != nil {
-				return err
-			}
-		}
-	}
+	return runDaemonLoop(
+		ctx,
+		*serverURL,
+		*nodeID,
+		*reconnectToken,
+		config,
+		runner,
+		sessions,
+		func(serverURL string) daemonClient {
+			return nodeclient.New(serverURL)
+		},
+		sleepWithContext,
+	)
 }
 
 func startSession(
 	ctx context.Context,
-	client *nodeclient.Client,
+	client daemonClient,
 	runner acpx.Runner,
 	sessions *sessionStore,
 	config nodeconfig.File,
@@ -312,7 +291,7 @@ func startSession(
 
 func cancelSession(
 	ctx context.Context,
-	client *nodeclient.Client,
+	client daemonClient,
 	sessions *sessionStore,
 	nodeID string,
 	envelope nodeclient.Envelope,
@@ -323,6 +302,135 @@ func cancelSession(
 		return nil
 	}
 	return client.Send(ctx, cancelledEvent(nodeID, envelope.SessionID, agentID, reason))
+}
+
+func runDaemonLoop(
+	ctx context.Context,
+	serverURL string,
+	nodeID string,
+	reconnectToken string,
+	config nodeconfig.File,
+	runner acpx.Runner,
+	sessions *sessionStore,
+	clientFactory daemonClientFactory,
+	sleep sleeper,
+) error {
+	backoff := time.Second
+
+	for {
+		err := runDaemonSession(ctx, serverURL, nodeID, reconnectToken, config, runner, sessions, clientFactory)
+		if err == nil || errors.Is(err, context.Canceled) {
+			return nil
+		}
+
+		var retryable retryableDaemonError
+		if !errors.As(err, &retryable) {
+			return err
+		}
+
+		if sleepErr := sleep(ctx, backoff); sleepErr != nil {
+			return nil
+		}
+		if backoff < 15*time.Second {
+			backoff *= 2
+			if backoff > 15*time.Second {
+				backoff = 15 * time.Second
+			}
+		}
+	}
+}
+
+func runDaemonSession(
+	ctx context.Context,
+	serverURL string,
+	nodeID string,
+	reconnectToken string,
+	config nodeconfig.File,
+	runner acpx.Runner,
+	sessions *sessionStore,
+	clientFactory daemonClientFactory,
+) error {
+	client := clientFactory(serverURL + "&nodeId=" + nodeID)
+	if err := client.Connect(ctx); err != nil {
+		return retryableDaemonError{err: err}
+	}
+	defer func() {
+		_ = client.Close()
+	}()
+
+	if err := client.Send(ctx, nodeclient.Envelope{
+		Type:      "node.resume",
+		RequestID: fmt.Sprintf("resume-%d", time.Now().UnixNano()),
+		Source:    nodeID,
+		Target:    "server",
+		Payload: map[string]any{
+			"nodeId":         nodeID,
+			"reconnectToken": reconnectToken,
+		},
+	}); err != nil {
+		return retryableDaemonError{err: err}
+	}
+	reply, err := client.Read(ctx)
+	if err != nil {
+		return retryableDaemonError{err: err}
+	}
+	if reply.Type == "node.resume.denied" {
+		return fmt.Errorf("resume denied: %v", reply.Payload["reason"])
+	}
+	if reply.Type != "node.resumed" {
+		return fmt.Errorf("unexpected resume reply %q", reply.Type)
+	}
+
+	if err := client.Send(ctx, nodeclient.Envelope{
+		Type:      "node.capabilities.sync",
+		RequestID: fmt.Sprintf("sync-%d", time.Now().UnixNano()),
+		Source:    nodeID,
+		Target:    "server",
+		Payload: map[string]any{
+			"nodeId":       nodeID,
+			"capabilities": config.Agents,
+		},
+	}); err != nil {
+		return retryableDaemonError{err: err}
+	}
+
+	sessionCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		_ = client.HeartbeatLoop(sessionCtx, nodeID)
+	}()
+
+	for {
+		envelope, err := client.Read(sessionCtx)
+		if err != nil {
+			if errors.Is(sessionCtx.Err(), context.Canceled) {
+				return nil
+			}
+			return retryableDaemonError{err: err}
+		}
+		switch envelope.Type {
+		case "session.start", "session.input":
+			if err := startSession(sessionCtx, client, runner, sessions, config, nodeID, envelope); err != nil {
+				return retryableDaemonError{err: err}
+			}
+		case "session.cancel":
+			if err := cancelSession(sessionCtx, client, sessions, nodeID, envelope); err != nil {
+				return retryableDaemonError{err: err}
+			}
+		}
+	}
+}
+
+func sleepWithContext(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func hostname() string {
