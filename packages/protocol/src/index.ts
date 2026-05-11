@@ -136,6 +136,17 @@ export const capabilitySyncPayloadSchema = z.object({
 });
 export type CapabilitySyncPayload = z.infer<typeof capabilitySyncPayloadSchema>;
 
+export const updateNodePathsRequestSchema = z.object({
+  paths: z.array(z.string())
+});
+export type UpdateNodePathsRequest = z.infer<typeof updateNodePathsRequestSchema>;
+
+export const nodePathsUpdatePayloadSchema = z.object({
+  nodeId: z.string(),
+  paths: z.array(z.string())
+});
+export type NodePathsUpdatePayload = z.infer<typeof nodePathsUpdatePayloadSchema>;
+
 export const sessionStartPayloadSchema = z.object({
   sessionId: z.string(),
   agentId: z.string(),

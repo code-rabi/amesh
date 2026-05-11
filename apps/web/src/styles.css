@@ -591,6 +591,13 @@ button:focus { outline: none; }
   color: var(--c-mute);
   margin-top: 2px;
 }
+.node-card__agent-cwd {
+  font: var(--t-mono);
+  font-size: 0.6875rem;
+  color: var(--c-accent-strong);
+  margin-top: 4px;
+  word-break: break-all;
+}
 .node-card__agent-status {
   font: var(--t-label);
   letter-spacing: 0.07em;
@@ -642,6 +649,44 @@ button:focus { outline: none; }
   letter-spacing: 0.04em;
   color: var(--c-mute);
   text-align: right;
+}
+.node-paths__panel {
+  width: min(280px, 100%);
+  padding: var(--s-3);
+  border: 1px solid var(--c-line);
+  border-radius: var(--r-sm);
+  background: var(--c-surface-raised);
+  display: grid;
+  gap: var(--s-2);
+  box-shadow: var(--shadow-float);
+}
+.node-paths__copy {
+  margin: 0;
+  color: var(--c-mute);
+  font: var(--t-body);
+  text-align: left;
+}
+.node-paths__label {
+  font: var(--t-label);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--c-mute);
+}
+.node-paths__textarea {
+  width: 100%;
+  min-height: 110px;
+  resize: vertical;
+  font: var(--t-mono);
+  padding: 8px 10px;
+  border: 1px solid var(--c-line);
+  border-radius: var(--r-sm);
+  background: var(--c-surface);
+  color: var(--c-ink);
+}
+.node-paths__actions {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s-2);
 }
 
 /* React Flow handles — agent source (right) + target (left)        */

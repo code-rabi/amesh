@@ -81,6 +81,18 @@ export async function requestNodeDetect(nodeId: string): Promise<void> {
   }
 }
 
+export async function updateNodePaths(nodeId: string, paths: string[]): Promise<void> {
+  const response = await apiFetch(`/api/nodes/${nodeId}/paths`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ paths })
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(body?.message ?? "Path update failed");
+  }
+}
+
 export async function createTriggerRule(input: {
   sourceAgentId: string;
   targetAgentId: string;

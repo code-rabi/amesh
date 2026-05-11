@@ -2,6 +2,7 @@ import type { TopologySnapshot } from "@amesh/protocol";
 
 import { relativeTime } from "../lib/time.js";
 import { NodeDetectButton } from "./NodeDetectButton.js";
+import { NodePathsButton } from "./NodePathsButton.js";
 import { NodeUpdateButton } from "./NodeUpdateButton.js";
 
 type Props = { topology: TopologySnapshot };
@@ -35,6 +36,7 @@ export function NarrowFallback({ topology }: Props) {
               </div>
               <div className="narrow-card__meta">
                 <span className={`pill pill-${node.status}`}>{node.status}</span>
+                <NodePathsButton node={node} agents={agents} compact />
                 <NodeDetectButton node={node} compact />
                 <NodeUpdateButton node={node} compact />
               </div>
@@ -51,6 +53,12 @@ export function NarrowFallback({ topology }: Props) {
                 {agents.map((agent) => (
                   <li key={agent.id}>
                     {agent.name} <span className="host">({agent.status})</span>
+                    {typeof agent.capabilities.cwd === "string" ? (
+                      <>
+                        {" "}
+                        <span className="host">[{agent.capabilities.cwd}]</span>
+                      </>
+                    ) : null}
                   </li>
                 ))}
               </ul>

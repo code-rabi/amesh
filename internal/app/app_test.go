@@ -244,6 +244,89 @@ func TestRunDaemonSessionHandlesNodeDetect(t *testing.T) {
 	assertEnvelopeTypes(t, client.sent, []string{"node.resume", "node.capabilities.sync", "node.capabilities.sync"})
 }
 
+func TestRunDaemonSessionHandlesNodePathUpdate(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	rootA := t.TempDir()
+	rootB := t.TempDir()
+	configPath := writeConfig(t, nodeconfig.File{
+		NodeName: "node-a",
+		Agents: []nodeconfig.AgentConfig{
+			{ID: "agent-a", Name: "Agent A", ACPXAgent: "claude", Command: "/bin/acpx"},
+		},
+	})
+	client := &fakeDaemonClient{
+		readResults: []fakeReadResult{
+			{envelope: nodeclient.Envelope{Type: "node.resumed"}},
+			{
+				envelope: nodeclient.Envelope{
+					Type: "node.paths.update",
+					Payload: map[string]any{
+						"paths": []any{rootA, rootB},
+					},
+				},
+			},
+		},
+		blockReadsUntilCanceled: true,
+	}
+
+	err := runDaemonSession(
+		ctx,
+		"ws://example.invalid/ws?role=node",
+		"node-a",
+		"token-a",
+		configPath,
+		acpx.Runner{},
+		newSessionStore(),
+		func(string) daemonClient { return client },
+		func(context.Context, nodeconfig.AgentConfig) bool {
+			cancel()
+			return true
+		},
+		func(context.Context, io.Writer, io.Writer) error { return nil },
+		func(context.Context, string) error { return nil },
+	)
+	if err != nil {
+		t.Fatalf("runDaemonSession() error = %v", err)
+	}
+
+	config, err := nodeconfig.Load(configPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if !slices.Equal(config.Paths, []string{rootA, rootB}) {
+		t.Fatalf("config paths = %v, want %v", config.Paths, []string{rootA, rootB})
+	}
+	assertEnvelopeTypes(t, client.sent, []string{"node.resume", "node.capabilities.sync", "node.capabilities.sync"})
+}
+
+func TestConfiguredAgentsKeepsBaseAgentsUnchanged(t *testing.T) {
+	t.Parallel()
+
+	got := configuredAgents(nodeconfig.File{
+		NodeName: "node-a",
+		Paths:    []string{"/work/repo-a", "/work/repo-b"},
+		Agents: []nodeconfig.AgentConfig{
+			{ID: "agent-codex", Name: "Codex", ACPXAgent: "codex", Command: "/bin/acpx"},
+		},
+	})
+
+	want := []nodeconfig.AgentConfig{
+		{
+			ID:        "agent-codex",
+			Name:      "Codex",
+			ACPXAgent: "codex",
+			Command:   "/bin/acpx",
+		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("configuredAgents() = %#v, want %#v", got, want)
+	}
+}
+
 func TestFilterHealthyAgents(t *testing.T) {
 	t.Parallel()
 

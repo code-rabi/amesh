@@ -24,6 +24,7 @@ type AgentConfig struct {
 // File describes the on-disk node daemon capability file.
 type File struct {
 	NodeName string        `json:"nodeName"`
+	Paths    []string      `json:"paths,omitempty"`
 	Agents   []AgentConfig `json:"agents"`
 }
 
@@ -57,6 +58,7 @@ func Load(path string) (File, error) {
 			file.Agents[index].Args = []string{}
 		}
 	}
+	file.Paths = normalizePaths(file.Paths)
 
 	return file, nil
 }
@@ -74,6 +76,28 @@ func Save(path string, file File) error {
 		return fmt.Errorf("write config %s: %w", path, err)
 	}
 	return nil
+}
+
+func normalizePaths(paths []string) []string {
+	if len(paths) == 0 {
+		return []string{}
+	}
+
+	seen := make(map[string]struct{}, len(paths))
+	normalized := make([]string, 0, len(paths))
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		path = filepath.Clean(path)
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		normalized = append(normalized, path)
+	}
+	return normalized
 }
 
 func defaultACPXCommand() string {

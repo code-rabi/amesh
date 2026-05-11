@@ -4,6 +4,7 @@ import { useNavigate } from "@tanstack/react-router";
 import type { AgentRecord, AgentStatus, NodeRecord, NodeStatus } from "@amesh/protocol";
 import { relativeTime } from "../lib/time.js";
 import { NodeDetectButton } from "./NodeDetectButton.js";
+import { NodePathsButton } from "./NodePathsButton.js";
 import { NodeUpdateButton } from "./NodeUpdateButton.js";
 
 export type NodeCardData = {
@@ -52,6 +53,9 @@ export function NodeCard({ data }: NodeCardProps) {
         <div className="node-card__meta">
           <span className={nodePill(node.status)}>{nodePillLabel(node.status)}</span>
           <div onPointerDown={(event) => event.stopPropagation()}>
+            <NodePathsButton node={node} agents={agents} compact />
+          </div>
+          <div onPointerDown={(event) => event.stopPropagation()}>
             <NodeDetectButton node={node} compact />
           </div>
           <div onPointerDown={(event) => event.stopPropagation()}>
@@ -71,6 +75,9 @@ export function NodeCard({ data }: NodeCardProps) {
                 <div>
                   <div className="node-card__agent-name">{agent.name}</div>
                   <div className="node-card__agent-id">{agent.id}</div>
+                  {typeof agent.capabilities.cwd === "string" ? (
+                    <div className="node-card__agent-cwd">{agent.capabilities.cwd}</div>
+                  ) : null}
                 </div>
                 <div className="node-card__agent-tail">
                   <button

@@ -45,3 +45,10 @@
 - The installer reported a completed install after writing the binary and service file, but it did not verify that the user service remained active or show enough detail about detect/register/state reuse.
 - Consequence: a host could look "installed" locally while the dashboard stayed empty and there was no immediate clue whether detection, registration, or service startup had failed.
 - Mitigation: the installer now logs each detect/register decision, fails fast if the systemd user service does not stay active, and prints service status plus recent journal lines. The daemon also logs detect, register, resume, and capability-sync milestones to stderr.
+
+## 2026-05-11: Node inventory had no lightweight way to express multiple working directories
+
+- The node config only described base agents, so a single machine could not advertise the same local agent across multiple useful workspaces without hand-editing duplicate agent entries.
+- Consequence: CWD management was brittle and there was no simple admin flow to expose extra repositories on a node before a fuller project model existed.
+- Follow-up: the first implementation expanded those folders into fake per-folder agents, which blurred the model and polluted topology.
+- Current mitigation: node config still has a top-level `paths` list, but those paths are now exposed session folders on the node. Agents stay as base inventory, and sessions carry `cwd` explicitly.

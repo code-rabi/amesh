@@ -737,6 +737,39 @@ describe("server app", () => {
     socket.close();
   });
 
+  it("sends an exposed-path update command to an online node through the admin API", async () => {
+    const socket = new WebSocket(`ws://${address}/ws?role=node&nodeId=node-1`);
+    await waitForOpen(socket);
+    socket.send(JSON.stringify(registerNode("node-1", "a")));
+    await readNodeMessage(socket);
+    socket.send(
+      JSON.stringify(syncCapabilities("node-1", [{ id: "agent-a", name: "A", acpxAgent: "a" }]))
+    );
+    await waitForIdle();
+
+    const response = await injectAuthed(app, authCookie, {
+      method: "POST",
+      url: "/api/nodes/node-1/paths",
+      payload: {
+        paths: ["/srv/work/repo-a", "/srv/work/repo-b"]
+      }
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ ok: true });
+
+    const pathMessage = await readNodeMessage(socket);
+    expect(pathMessage).toMatchObject({
+      type: "node.paths.update",
+      source: "server",
+      target: "node-1",
+      payload: {
+        nodeId: "node-1",
+        paths: ["/srv/work/repo-a", "/srv/work/repo-b"]
+      }
+    });
+    socket.close();
+  });
+
   it("rejects update commands for offline nodes", async () => {
     const socket = new WebSocket(`ws://${address}/ws?role=node&nodeId=node-1`);
     await waitForOpen(socket);
@@ -770,6 +803,27 @@ describe("server app", () => {
     expect(response.statusCode).toBe(409);
     expect(response.json()).toEqual({
       message: "node must be online to detect agents"
+    });
+  });
+
+  it("rejects exposed-path updates for offline nodes", async () => {
+    const socket = new WebSocket(`ws://${address}/ws?role=node&nodeId=node-1`);
+    await waitForOpen(socket);
+    socket.send(JSON.stringify(registerNode("node-1", "a")));
+    await readNodeMessage(socket);
+    socket.close();
+    await waitForIdle();
+
+    const response = await injectAuthed(app, authCookie, {
+      method: "POST",
+      url: "/api/nodes/node-1/paths",
+      payload: {
+        paths: ["/srv/work/repo-a"]
+      }
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({
+      message: "node must be online to update exposed paths"
     });
   });
 });

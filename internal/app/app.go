@@ -201,14 +201,17 @@ func defaultACPXCommand() string {
 
 func runDetect(ctx context.Context, configPath string) error {
 	nodeName := hostname()
+	paths := []string{}
 	if existing, err := nodeconfig.Load(configPath); err == nil && strings.TrimSpace(existing.NodeName) != "" {
 		nodeName = existing.NodeName
+		paths = existing.Paths
 	}
 
 	logf("detect start config=%s node=%s acpx=%s", configPath, nodeName, defaultACPXCommand())
 	detected := detectAgents(ctx, acpx.Runner{})
 	config := nodeconfig.File{
 		NodeName: nodeName,
+		Paths:    paths,
 		Agents:   detected,
 	}
 	if err := nodeconfig.Save(configPath, config); err != nil {
@@ -265,6 +268,30 @@ func detectInstalledAgents(candidates []detectableAgent) []detectableAgent {
 		}
 	}
 	return detected
+}
+
+func configuredAgents(config nodeconfig.File) []nodeconfig.AgentConfig {
+	return append([]nodeconfig.AgentConfig(nil), config.Agents...)
+}
+
+func appendUniqueLabels(labels []string, extra ...string) []string {
+	seen := make(map[string]struct{}, len(labels)+len(extra))
+	merged := make([]string, 0, len(labels)+len(extra))
+	for _, label := range labels {
+		if _, ok := seen[label]; ok {
+			continue
+		}
+		seen[label] = struct{}{}
+		merged = append(merged, label)
+	}
+	for _, label := range extra {
+		if _, ok := seen[label]; ok {
+			continue
+		}
+		seen[label] = struct{}{}
+		merged = append(merged, label)
+	}
+	return merged
 }
 
 func detectableAgentsFromACPXHelp(ctx context.Context, command string) ([]detectableAgent, error) {
@@ -490,12 +517,13 @@ func startSession(
 	if err != nil {
 		return fmt.Errorf("load config %s: %w", configPath, err)
 	}
+	agents := configuredAgents(config)
 	agentID, _ := envelope.Payload["agentId"].(string)
 	prompt, _ := envelope.Payload["prompt"].(string)
 	sessionID := deref(envelope.SessionID)
 
 	var target *nodeconfig.AgentConfig
-	for _, candidate := range config.Agents {
+	for _, candidate := range agents {
 		if candidate.ID == agentID {
 			candidate := candidate
 			target = &candidate
@@ -547,6 +575,55 @@ func startSession(
 	}()
 
 	return nil
+}
+
+func updateConfigPaths(configPath string, paths []string) error {
+	config, err := nodeconfig.Load(configPath)
+	if err != nil {
+		return fmt.Errorf("load config %s: %w", configPath, err)
+	}
+
+	resolved, err := resolveExposedPaths(paths)
+	if err != nil {
+		return err
+	}
+	config.Paths = resolved
+	if err := nodeconfig.Save(configPath, config); err != nil {
+		return err
+	}
+	return nil
+}
+
+func resolveExposedPaths(paths []string) ([]string, error) {
+	if len(paths) == 0 {
+		return []string{}, nil
+	}
+
+	seen := make(map[string]struct{}, len(paths))
+	resolved := make([]string, 0, len(paths))
+	for _, raw := range paths {
+		path := strings.TrimSpace(raw)
+		if path == "" {
+			continue
+		}
+		absolute, err := filepath.Abs(path)
+		if err != nil {
+			return nil, fmt.Errorf("resolve path %q: %w", path, err)
+		}
+		info, err := os.Stat(absolute)
+		if err != nil {
+			return nil, fmt.Errorf("stat path %q: %w", absolute, err)
+		}
+		if !info.IsDir() {
+			return nil, fmt.Errorf("path %q is not a directory", absolute)
+		}
+		if _, ok := seen[absolute]; ok {
+			continue
+		}
+		seen[absolute] = struct{}{}
+		resolved = append(resolved, absolute)
+	}
+	return resolved, nil
 }
 
 func cancelSession(
@@ -704,6 +781,25 @@ func runDaemonSession(
 			if err := syncHealthyCapabilities(sessionCtx, client, nodeID, configPath, probe); err != nil {
 				return retryableDaemonError{err: err}
 			}
+		case "node.paths.update":
+			paths, ok := envelope.Payload["paths"].([]any)
+			if !ok {
+				return fmt.Errorf("node path update failed: invalid paths payload")
+			}
+			nextPaths := make([]string, 0, len(paths))
+			for _, raw := range paths {
+				path, ok := raw.(string)
+				if !ok {
+					return fmt.Errorf("node path update failed: invalid path entry")
+				}
+				nextPaths = append(nextPaths, path)
+			}
+			if err := updateConfigPaths(configPath, nextPaths); err != nil {
+				return fmt.Errorf("node path update failed: %w", err)
+			}
+			if err := syncHealthyCapabilities(sessionCtx, client, nodeID, configPath, probe); err != nil {
+				return retryableDaemonError{err: err}
+			}
 		case "node.update":
 			logf("update command node=%s", nodeID)
 			if err := update(sessionCtx, os.Stdout, os.Stderr); err != nil {
@@ -725,7 +821,7 @@ func syncHealthyCapabilities(
 	if err != nil {
 		return fmt.Errorf("load config %s: %w", configPath, err)
 	}
-	capabilities := filterHealthyAgents(ctx, config.Agents, probe)
+	capabilities := filterHealthyAgents(ctx, configuredAgents(config), probe)
 	logf("capability sync node=%s config=%s configured=%d healthy=%d", nodeID, configPath, len(config.Agents), len(capabilities))
 	return client.Send(ctx, nodeclient.Envelope{
 		Type:      "node.capabilities.sync",

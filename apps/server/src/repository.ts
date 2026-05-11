@@ -179,6 +179,7 @@ export class Repository {
           status: "online",
           capabilities: JSON.stringify({
             acpxAgent: capability.acpxAgent,
+            cwd: capability.cwd,
             labels: capability.labels
           })
         })
@@ -189,6 +190,7 @@ export class Repository {
             status: "online",
             capabilities: JSON.stringify({
               acpxAgent: capability.acpxAgent,
+              cwd: capability.cwd,
               labels: capability.labels
             })
           }

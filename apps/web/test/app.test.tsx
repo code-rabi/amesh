@@ -15,6 +15,7 @@ const socket = new MockSocket();
 let authenticated = true;
 let updateRequests = 0;
 let detectRequests = 0;
+let pathRequests = 0;
 let narrowLayout = false;
 let updateRequired = true;
 let topologyNodes = [
@@ -65,6 +66,10 @@ beforeEach(() => {
         detectRequests += 1;
         return response({ ok: true });
       }
+      if (url.endsWith("/api/nodes/node-1/paths")) {
+        pathRequests += 1;
+        return response({ ok: true });
+      }
       if (url.endsWith("/api/sessions")) {
         return response([]);
       }
@@ -78,7 +83,9 @@ beforeEach(() => {
               name: "Planner",
               backend: "acpx",
               status: "online",
-              capabilities: {}
+              capabilities: {
+                cwd: "/srv/work/repo-a"
+              }
             }
           ],
           triggerRules: []
@@ -90,6 +97,7 @@ beforeEach(() => {
   authenticated = true;
   updateRequests = 0;
   detectRequests = 0;
+  pathRequests = 0;
   narrowLayout = false;
   updateRequired = true;
   topologyNodes = [
@@ -221,6 +229,30 @@ describe("App shell", () => {
     await waitFor(() => expect(detectRequests).toBe(1));
     await waitFor(() =>
       expect(screen.getByText(/detection requested\. the node will refresh its agent inventory\./i)).toBeTruthy()
+    );
+  });
+
+  it("updates exposed paths from the admin UI", async () => {
+    narrowLayout = true;
+    window.history.pushState({}, "", "/");
+    render(<App />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /manage exposed paths on lab-01/i })).toBeTruthy()
+    );
+    fireEvent.click(screen.getByRole("button", { name: /manage exposed paths on lab-01/i }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("dialog", { name: /manage exposed paths for lab-01/i })).toBeTruthy()
+    );
+    fireEvent.change(screen.getByLabelText(/exposed directories/i), {
+      target: { value: "/srv/work/repo-a\n/srv/work/repo-b" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: /save paths/i }));
+
+    await waitFor(() => expect(pathRequests).toBe(1));
+    await waitFor(() =>
+      expect(screen.getByText(/exposed paths updated\. the node will refresh its workspace-scoped agents\./i)).toBeTruthy()
     );
   });
 

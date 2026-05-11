@@ -4,6 +4,7 @@ import type {
   CreateSessionRequest,
   InvocationRequestPayload,
   NodeHeartbeatPayload,
+  NodePathsUpdatePayload,
   NodeRegistrationPayload,
   NodeResumePayload,
   ProtocolEnvelope,
@@ -20,6 +21,7 @@ import {
   createSessionRequestSchema,
   invocationRequestPayloadSchema,
   nodeHeartbeatPayloadSchema,
+  nodePathsUpdatePayloadSchema,
   nodeRegistrationPayloadSchema,
   nodeResumePayloadSchema,
   parseProtocolEnvelope,
@@ -27,6 +29,7 @@ import {
   sessionInputPayloadSchema,
   sessionStartPayloadSchema,
   topologySnapshotSchema,
+  updateNodePathsRequestSchema,
   upsertTriggerRuleRequestSchema
 } from "@amesh/protocol";
 import cookie from "@fastify/cookie";
@@ -617,6 +620,11 @@ function registerApiRoutes({
   app.post("/api/nodes/:nodeId/detect", { preHandler: requireBrowserAuth }, async (request: FastifyRequest, reply: FastifyReply) =>
     triggerNodeAction(request, reply, repository, nodeSockets, sendToNode, "detect")
   );
+  app.post("/api/nodes/:nodeId/paths", { preHandler: requireBrowserAuth }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const params = request.params as { nodeId: string };
+    const body = updateNodePathsRequestSchema.parse(request.body) as { paths: string[] };
+    return triggerNodePathUpdate(params.nodeId, body.paths, reply, repository, nodeSockets, sendToNode);
+  });
   app.get("/api/sessions", { preHandler: requireBrowserAuth }, async () => repository.listSessions());
   app.get("/api/sessions/:sessionId", { preHandler: requireBrowserAuth }, async (request: FastifyRequest, reply: FastifyReply) => {
     const state = repository.getSession((request.params as { sessionId: string }).sessionId);
@@ -761,6 +769,29 @@ function registerApiRoutes({
   });
 }
 
+function validateOnlineNodeAction(
+  nodeId: string,
+  action: string,
+  reply: FastifyReply,
+  repository: Repository,
+  nodeSockets: Map<string, NodeSocket>
+) {
+  const node = repository.findNode(nodeId);
+  if (!node) {
+    reply.code(404);
+    return { ok: false as const, body: { message: "node not found" } };
+  }
+  if (node.status !== "online") {
+    reply.code(409);
+    return { ok: false as const, body: { message: `node must be online to ${action}` } };
+  }
+  if (!nodeSockets.has(node.id)) {
+    reply.code(409);
+    return { ok: false as const, body: { message: "node socket is not connected" } };
+  }
+  return { ok: true as const, node };
+}
+
 async function triggerNodeAction(
   request: FastifyRequest,
   reply: FastifyReply,
@@ -770,29 +801,59 @@ async function triggerNodeAction(
   action: "update" | "detect"
 ) {
   const params = request.params as { nodeId: string };
-  const node = repository.findNode(params.nodeId);
-  if (!node) {
-    reply.code(404);
-    return { message: "node not found" };
-  }
-  if (node.status !== "online") {
-    reply.code(409);
-    return { message: `node must be online to ${action === "update" ? "update" : "detect agents"}` };
-  }
-  if (!nodeSockets.has(node.id)) {
-    reply.code(409);
-    return { message: "node socket is not connected" };
+  const validation = validateOnlineNodeAction(
+    params.nodeId,
+    action === "update" ? "update" : "detect agents",
+    reply,
+    repository,
+    nodeSockets
+  );
+  if (!validation.ok) {
+    return validation.body;
   }
 
-  sendToNode(node.id, {
+  sendToNode(validation.node.id, {
     type: action === "update" ? "node.update" : "node.detect",
     requestId: nanoid(10),
     sessionId: null,
     source: "server",
-    target: node.id,
+    target: validation.node.id,
     payload: {
-      nodeId: node.id
+      nodeId: validation.node.id
     }
+  });
+  return { ok: true };
+}
+
+function triggerNodePathUpdate(
+  nodeId: string,
+  paths: string[],
+  reply: FastifyReply,
+  repository: Repository,
+  nodeSockets: Map<string, NodeSocket>,
+  sendToNode: (nodeId: string, envelope: ProtocolEnvelope) => void
+) {
+  const validation = validateOnlineNodeAction(
+    nodeId,
+    "update exposed paths",
+    reply,
+    repository,
+    nodeSockets
+  );
+  if (!validation.ok) {
+    return validation.body;
+  }
+
+  sendToNode(validation.node.id, {
+    type: "node.paths.update",
+    requestId: nanoid(10),
+    sessionId: null,
+    source: "server",
+    target: validation.node.id,
+    payload: nodePathsUpdatePayloadSchema.parse({
+      nodeId: validation.node.id,
+      paths
+    }) as NodePathsUpdatePayload
   });
   return { ok: true };
 }
