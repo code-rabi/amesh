@@ -69,6 +69,7 @@ export const sessionEventTypeSchema = z.enum([
   "session.prompted",
   "session.output.delta",
   "session.output.completed",
+  "session.acp.update",
   "session.invocation.requested",
   "session.invocation.allowed",
   "session.invocation.denied",

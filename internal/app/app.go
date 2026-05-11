@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -275,7 +276,7 @@ func startSession(
 	sessions.setCancel(sessionID, cancel)
 	go func() {
 		defer sessions.clearRunning(sessionID)
-		output, err := runner.Run(runCtx, acpx.RunRequest{
+		_, err := runner.Run(runCtx, acpx.RunRequest{
 			Command:    target.Command,
 			Args:       target.Args,
 			Agent:      target.ACPXAgent,
@@ -283,8 +284,16 @@ func startSession(
 			WorkingDir: target.CWD,
 			Env:        envList(target.Env),
 			Stdin:      aggregatedPrompt,
-		}, func(text string) {
-			_ = client.Send(ctx, deltaEvent(nodeID, envelope.SessionID, agentID, text))
+		}, func(line string) {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				return
+			}
+			event, ok := acpUpdateEventFromLine(nodeID, envelope.SessionID, agentID, line)
+			if !ok {
+				return
+			}
+			_ = client.Send(ctx, event)
 		})
 		if err != nil {
 			if errors.Is(runCtx.Err(), context.Canceled) {
@@ -295,7 +304,7 @@ func startSession(
 			return
 		}
 
-		_ = client.Send(ctx, completedEvent(nodeID, envelope.SessionID, agentID, string(output)))
+		_ = client.Send(ctx, completedEvent(nodeID, envelope.SessionID, agentID, ""))
 	}()
 
 	return nil
@@ -396,6 +405,48 @@ func (store *sessionStore) cancel(sessionID string) bool {
 		cancel()
 	}
 	return ok
+}
+
+// acpUpdateEventFromLine parses one stdout line from `acpx --format json` and, if it
+// represents an ACP session/update notification, wraps the raw update payload in an
+// amesh session.event for forwarding to the control plane. Other JSON-RPC traffic
+// (requests, responses) is ignored: amesh's browser surface only needs the agent's
+// session/update notifications.
+func acpUpdateEventFromLine(nodeID string, sessionID *string, agentID string, line string) (nodeclient.Envelope, bool) {
+	var rpc struct {
+		JSONRPC string         `json:"jsonrpc"`
+		Method  string         `json:"method"`
+		Params  map[string]any `json:"params"`
+	}
+	if err := json.Unmarshal([]byte(line), &rpc); err != nil {
+		return nodeclient.Envelope{}, false
+	}
+	if rpc.JSONRPC == "" || rpc.Method != "session/update" || rpc.Params == nil {
+		return nodeclient.Envelope{}, false
+	}
+	update, ok := rpc.Params["update"].(map[string]any)
+	if !ok {
+		return nodeclient.Envelope{}, false
+	}
+
+	return nodeclient.Envelope{
+		Type:      "session.event",
+		RequestID: fmt.Sprintf("event-%d", time.Now().UnixNano()),
+		SessionID: sessionID,
+		Source:    nodeID,
+		Target:    "server",
+		Payload: map[string]any{
+			"id":            fmt.Sprintf("evt-%d", time.Now().UnixNano()),
+			"sessionId":     deref(sessionID),
+			"eventType":     "session.acp.update",
+			"sourceAgentId": agentID,
+			"targetAgentId": nil,
+			"payload": map[string]any{
+				"update": update,
+			},
+			"createdAt": time.Now().UTC().Format(time.RFC3339),
+		},
+	}, true
 }
 
 func deltaEvent(nodeID string, sessionID *string, agentID string, text string) nodeclient.Envelope {

@@ -1,6 +1,7 @@
 package acpx
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -24,11 +25,14 @@ type RunRequest struct {
 // Runner executes local acpx-backed agent requests.
 type Runner struct{}
 
-// Run starts the configured process, streams output chunks as they arrive, and returns the full output.
+// Run starts the configured process, streams stdout line-by-line through onStdoutLine,
+// and returns the full stdout output. stderr is captured separately and discarded; acpx's
+// stderr is debug noise (status banners, token footers) and would corrupt structured
+// stdout if merged.
 func (Runner) Run(
 	ctx context.Context,
 	request RunRequest,
-	onChunk func(text string),
+	onStdoutLine func(line string),
 ) ([]byte, error) {
 	command := request.Command
 	if command == "" {
@@ -39,10 +43,10 @@ func (Runner) Run(
 		if err := runCommand(ctx, command, buildEnsureArgs(request), request.WorkingDir, request.Env, ""); err != nil {
 			return nil, fmt.Errorf("ensure acpx session: %w", err)
 		}
-		return runStreamingCommand(ctx, command, buildPromptArgs(request), request.WorkingDir, request.Env, request.Stdin, onChunk)
+		return runStreamingCommand(ctx, command, buildPromptArgs(request), request.WorkingDir, request.Env, request.Stdin, onStdoutLine)
 	}
 
-	return runStreamingCommand(ctx, command, request.Args, request.WorkingDir, request.Env, request.Stdin, onChunk)
+	return runStreamingCommand(ctx, command, request.Args, request.WorkingDir, request.Env, request.Stdin, onStdoutLine)
 }
 
 func buildEnsureArgs(request RunRequest) []string {
@@ -59,7 +63,10 @@ func buildEnsureArgs(request RunRequest) []string {
 
 func buildPromptArgs(request RunRequest) []string {
 	args := append([]string{}, request.Args...)
-	args = append(args, "--format", "quiet")
+	// JSON output: one raw ACP JSON-RPC message per line. Lets the control plane
+	// forward structured session/update notifications (tool_call, agent_message_chunk,
+	// agent_thought_chunk, plan, usage_update) instead of flattened text.
+	args = append(args, "--format", "json", "--json-strict")
 	if request.WorkingDir != "" {
 		args = append(args, "--cwd", request.WorkingDir)
 	}
@@ -98,7 +105,7 @@ func runStreamingCommand(
 	workingDir string,
 	env []string,
 	stdinText string,
-	onChunk func(text string),
+	onStdoutLine func(line string),
 ) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, command, args...)
 	cmd.Dir = workingDir
@@ -128,40 +135,39 @@ func runStreamingCommand(
 	}
 
 	var (
-		buffer bytes.Buffer
-		mu     sync.Mutex
-		wg     sync.WaitGroup
+		stdoutBuf bytes.Buffer
+		mu        sync.Mutex
+		wg        sync.WaitGroup
 	)
-	collect := func(reader io.Reader) {
-		defer wg.Done()
-		chunk := make([]byte, 1024)
-		for {
-			n, err := reader.Read(chunk)
-			if n > 0 {
-				text := string(chunk[:n])
-				mu.Lock()
-				buffer.WriteString(text)
-				mu.Unlock()
-				if onChunk != nil {
-					onChunk(text)
-				}
-			}
-			if err != nil {
-				if err == io.EOF {
-					return
-				}
-				return
-			}
-		}
-	}
 
 	wg.Add(2)
-	go collect(stdout)
-	go collect(stderr)
+	go func() {
+		defer wg.Done()
+		scanner := bufio.NewScanner(stdout)
+		scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
+		for scanner.Scan() {
+			line := scanner.Bytes()
+			mu.Lock()
+			stdoutBuf.Write(line)
+			stdoutBuf.WriteByte('\n')
+			mu.Unlock()
+			if onStdoutLine != nil {
+				onStdoutLine(string(line))
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		// Drain stderr so the child process never blocks on a full pipe.
+		// We intentionally discard the contents: acpx stderr is operator noise
+		// (banners, [acpx] tokens summary, http debug) and never carries protocol
+		// state. Surfacing it would let it leak into chat transcripts again.
+		_, _ = io.Copy(io.Discard, stderr)
+	}()
 
 	err = cmd.Wait()
 	wg.Wait()
-	output := buffer.Bytes()
+	output := stdoutBuf.Bytes()
 	if err != nil {
 		return output, fmt.Errorf("run acpx: %w", err)
 	}
