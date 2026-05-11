@@ -5,7 +5,11 @@ import { buildApp } from "../src/app.js";
 import { WebSocket } from "ws";
 
 async function main() {
-  const app = buildApp({ dbPath: ":memory:" });
+  const app = buildApp({
+    dbPath: ":memory:",
+    authPassword: "secret-pass",
+    authSecret: "test-secret"
+  });
   await app.listen({ port: 0, host: "127.0.0.1" });
 
   const address = app.server.address() as AddressInfo | null;
@@ -16,6 +20,7 @@ async function main() {
   const base = `127.0.0.1:${address.port}`;
   const sourceNode = await connectNode(base, "node-source");
   const targetNode = await connectNode(base, "node-target");
+  const authCookie = await loginCookie(app);
 
   try {
     sourceNode.socket.send(JSON.stringify(registerNode("node-source", "source-host")));
@@ -37,7 +42,7 @@ async function main() {
 
     await idle();
 
-    const direct = await app.inject({
+    const direct = await injectAuthed(app, authCookie, {
       method: "POST",
       url: "/api/sessions",
       payload: {
@@ -57,7 +62,7 @@ async function main() {
     );
     await idle();
 
-    const directState = await app.inject({
+    const directState = await injectAuthed(app, authCookie, {
       method: "GET",
       url: `/api/sessions/${directSessionId}`
     });
@@ -91,7 +96,7 @@ async function main() {
     );
     await idle();
 
-    const deniedState = await app.inject({
+    const deniedState = await injectAuthed(app, authCookie, {
       method: "GET",
       url: `/api/sessions/${directSessionId}`
     });
@@ -101,7 +106,7 @@ async function main() {
     assert(deniedEventTypes.includes("session.invocation.denied"), "expected denied invocation");
     assert(deniedEventTypes.includes("audit"), "expected audit event for denied invocation");
 
-    await app.inject({
+    await injectAuthed(app, authCookie, {
       method: "POST",
       url: "/api/trigger-rules",
       payload: {
@@ -150,7 +155,7 @@ async function main() {
     );
     await idle();
 
-    const allowedState = await app.inject({
+    const allowedState = await injectAuthed(app, authCookie, {
       method: "GET",
       url: `/api/sessions/${directSessionId}`
     });
@@ -258,6 +263,43 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
     throw new Error(message);
   }
+}
+
+async function loginCookie(app: ReturnType<typeof buildApp>) {
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/auth/login",
+    payload: {
+      password: "secret-pass"
+    }
+  });
+  const cookie = response.headers["set-cookie"];
+  assert(cookie, "expected auth cookie from login");
+  return String(cookie).split(";")[0];
+}
+
+async function injectAuthed(
+  app: ReturnType<typeof buildApp>,
+  cookie: string,
+  options: {
+    method: "GET" | "POST";
+    url: string;
+    payload?: any;
+    headers?: Record<string, string>;
+  }
+) : Promise<{
+  json: () => any;
+  statusCode: number;
+  body: string;
+  headers: Record<string, string | string[] | undefined>;
+}> {
+  return (await app.inject({
+    ...options,
+    headers: {
+      ...(options.headers ?? {}),
+      cookie
+    }
+  })) as any;
 }
 
 void main();

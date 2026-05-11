@@ -35,6 +35,7 @@ sh -n scripts/install-amesh-node.sh
 - `corepack pnpm dev:daemon` installs a managed ACPX sidecar under `~/.local/share/amesh/acpx` if needed, registers `node-a` on first run, saves `.amesh-node-state.json`, and then starts the long-lived daemon process against `examples/agents.json`.
 - The daemon now keeps running when the control plane goes away. It retries websocket connect, `node.resume`, and capability sync with backoff until the server returns.
 - Agent topology status is derived from daemon-side ACPX health probes, not just from the node websocket being connected. Unhealthy local agents are omitted from capability sync and appear offline in the control plane.
+- The server smoke script authenticates through `/api/auth/login` before it exercises operator APIs, so local smoke usage matches production browser auth instead of relying on anonymous access.
 - `install-amesh-node.sh` downloads the released `amesh-node` binary for the current platform, installs a managed ACPX sidecar under `~/.local/share/amesh/acpx`, and exports `AMESH_ACPX_PATH` for the service.
 - ACP aliases for external clients can be served locally with `go run ./cmd/amesh acp <alias>`. The default alias registry is `~/.config/amesh/acp.json`:
 
