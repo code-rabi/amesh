@@ -129,6 +129,12 @@ body {
   text-transform: uppercase;
 }
 
+.auth-wordmark {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0;
+}
+
 .auth-copy {
   margin: var(--s-3) 0 var(--s-5);
   color: var(--c-mute);
@@ -264,16 +270,12 @@ button:focus { outline: none; }
   text-decoration: none;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
   text-transform: uppercase;
   font-feature-settings: "ss01" on, "cv11" on;
 }
-.wordmark::before {
-  content: "";
-  width: 8px; height: 8px;
-  border-radius: 2px;
-  background: var(--c-accent);
-  display: inline-block;
+
+.brand-a {
+  color: var(--c-accent);
 }
 
 .routenav {

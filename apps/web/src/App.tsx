@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { RouterProvider } from "@tanstack/react-router";
 
 import { ApiUnauthorizedError, fetchAuthSession, login, onUnauthorized } from "./api.js";
+import { BrandWordmark } from "./components/BrandWordmark.js";
 import { SessionsProvider } from "./lib/sessionsContext.js";
 import { TopologyProvider } from "./lib/topologyContext.js";
 import { router } from "./router.js";
@@ -53,7 +54,9 @@ export function App() {
       <main className="auth-shell">
         <section className="auth-panel">
           <p className="auth-kicker">Control Plane</p>
-          <h1>amesh</h1>
+          <h1>
+            <BrandWordmark className="auth-wordmark" />
+          </h1>
           <p className="auth-copy">Enter the admin password to open the dashboard.</p>
           <form className="auth-form" onSubmit={(event) => void handleLogin(event)}>
             <label className="auth-label" htmlFor="admin-password">
