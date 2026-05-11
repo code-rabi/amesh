@@ -15,7 +15,10 @@ corepack pnpm dev:daemon
 corepack pnpm test
 corepack pnpm typecheck
 corepack pnpm --filter @amesh/server smoke
+corepack pnpm check:knip
+corepack pnpm check:sentrux
 bash -n scripts/dev-daemon.sh
+bash -n scripts/sentrux-check.sh
 sh -n install-amesh-node.sh
 sh -n scripts/install-amesh-node.sh
 ```
@@ -36,6 +39,8 @@ sh -n scripts/install-amesh-node.sh
 - The daemon now keeps running when the control plane goes away. It retries websocket connect, `node.resume`, and capability sync with backoff until the server returns.
 - Agent topology status is derived from daemon-side ACPX health probes, not just from the node websocket being connected. Unhealthy local agents are omitted from capability sync and appear offline in the control plane.
 - The server smoke script authenticates through `/api/auth/login` before it exercises operator APIs, so local smoke usage matches production browser auth instead of relying on anonymous access.
+- `corepack pnpm check:knip` runs unused dependency and export checks against the TypeScript workspaces only; it intentionally ignores repo-local agent skill folders and the Go tree.
+- `corepack pnpm check:sentrux` installs a pinned user-space `sentrux` binary under `.tools/` on first run and enforces the repo rules from `.sentrux/rules.toml`.
 - `install-amesh-node.sh` downloads the released `amesh-node` binary for the current platform, installs a managed ACPX sidecar under `~/.local/share/amesh/acpx`, and exports `AMESH_ACPX_PATH` for the service.
 - ACP aliases for external clients can be served locally with `go run ./cmd/amesh acp <alias>`. The default alias registry is `~/.config/amesh/acp.json`:
 

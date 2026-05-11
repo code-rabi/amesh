@@ -6,11 +6,16 @@
   "scripts": {
     "build": "pnpm -r build",
     "check": "pnpm lint && pnpm test && pnpm typecheck && pnpm --filter @amesh/server smoke",
+    "check:knip": "knip --workspace apps/server --workspace apps/web --workspace packages/protocol --no-config-hints",
+    "check:sentrux": "bash scripts/sentrux-check.sh",
     "dev:daemon": "bash scripts/dev-daemon.sh",
     "dev:dameon": "pnpm dev:daemon",
     "dev": "pnpm --parallel --filter @amesh/server --filter @amesh/web dev",
     "lint": "pnpm -r lint",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "knip": "^6.12.2"
   }
 }

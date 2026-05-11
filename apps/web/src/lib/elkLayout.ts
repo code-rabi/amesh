@@ -10,14 +10,12 @@ const ElkConstructor = ((ElkModule as unknown as { default?: ElkCtor }).default 
 
 const elk = new ElkConstructor();
 
-export type LaidOutNode = { id: string; x: number; y: number };
-
 const NODE_WIDTH = 240;
 const HEADER_HEIGHT = 78;
 const AGENT_ROW_HEIGHT = 56;
 const MIN_HEIGHT = 120;
 
-export function nodeHeight(agentCount: number): number {
+function nodeHeight(agentCount: number): number {
   if (agentCount === 0) return MIN_HEIGHT;
   return HEADER_HEIGHT + agentCount * AGENT_ROW_HEIGHT + 8;
 }

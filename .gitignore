@@ -1,6 +1,7 @@
 node_modules
 dist
 .turbo
+.tools
 .DS_Store
 apps/server/data
 apps/server/apps

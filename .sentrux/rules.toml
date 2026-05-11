@@ -1,0 +1,38 @@
+[constraints]
+min_quality = 0.60
+min_modularity = 0.50
+min_acyclicity = 0.95
+min_depth = 0.40
+min_equality = 0.45
+min_redundancy = 0.85
+max_cycles = 0
+max_cc = 200
+max_fn_lines = 700
+max_file_lines = 7000
+max_coupling_score = 1.0
+max_upward_violations = 0
+
+[[layers]]
+name = "web"
+paths = ["apps/web/src/*"]
+order = 0
+
+[[layers]]
+name = "server"
+paths = ["apps/server/src/*"]
+order = 1
+
+[[layers]]
+name = "go-cli"
+paths = ["cmd/*"]
+order = 2
+
+[[layers]]
+name = "go-internal"
+paths = ["internal/*"]
+order = 3
+
+[[layers]]
+name = "protocol"
+paths = ["packages/protocol/src/*"]
+order = 4

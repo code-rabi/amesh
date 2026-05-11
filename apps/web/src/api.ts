@@ -51,10 +51,6 @@ export async function login(password: string): Promise<void> {
   }
 }
 
-export async function logout(): Promise<void> {
-  await apiFetch("/api/auth/logout", { method: "POST" });
-}
-
 export async function fetchTopology(): Promise<TopologySnapshot> {
   const response = await apiFetch("/api/topology");
   return response.json();

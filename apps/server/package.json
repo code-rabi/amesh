@@ -15,7 +15,6 @@
   "dependencies": {
     "@amesh/protocol": "workspace:*",
     "@fastify/cookie": "^11.0.2",
-    "@fastify/websocket": "^11.2.0",
     "better-sqlite3": "^12.2.0",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.44.5",
