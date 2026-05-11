@@ -6,7 +6,7 @@ type Props = {
 };
 
 function installCommand(serverUrl: string, token: string) {
-  return `curl -fsSL https://raw.githubusercontent.com/NitayRabi/amesh/main/install-amesh-node.sh \\
+  return `curl -fsSL https://raw.githubusercontent.com/code-rabi/amesh/main/install-amesh-node.sh \\
   | SERVER_URL='${serverUrl}' \\
     REGISTRATION_TOKEN='${token}' \\
     bash`;

@@ -27,7 +27,7 @@ Initial product and architecture details live in [docs/design/mvp-design.md](/ho
 Install the remote node with one command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/NitayRabi/amesh/main/install-amesh-node.sh \
+curl -fsSL https://raw.githubusercontent.com/code-rabi/amesh/main/install-amesh-node.sh \
   | SERVER_URL='ws://your-server:3001/ws?role=node' \
     REGISTRATION_TOKEN='demo-token' \
     bash

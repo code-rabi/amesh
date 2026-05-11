@@ -49,7 +49,7 @@ func runUpdate(ctx context.Context, stdout, stderr io.Writer) error {
 
 	repo := os.Getenv("AMESH_REPO")
 	if repo == "" {
-		repo = "NitayRabi/amesh"
+		repo = "code-rabi/amesh"
 	}
 	installerURL := os.Getenv("AMESH_INSTALL_URL")
 	if installerURL == "" {

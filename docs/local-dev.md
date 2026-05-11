@@ -71,7 +71,7 @@ go run ./cmd/amesh-node run \
 ## Remote install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/NitayRabi/amesh/main/install-amesh-node.sh \
+curl -fsSL https://raw.githubusercontent.com/code-rabi/amesh/main/install-amesh-node.sh \
   | SERVER_URL='ws://your-server:3001/ws?role=node' \
     REGISTRATION_TOKEN='demo-token' \
     CONFIG_PATH='/path/to/agents.json' \

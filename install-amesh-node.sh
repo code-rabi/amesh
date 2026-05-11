@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-REPO="${AMESH_REPO:-NitayRabi/amesh}"
+REPO="${AMESH_REPO:-code-rabi/amesh}"
 INSTALL_DIR="${INSTALL_DIR:-}"
 VERSION_TAG="${AMESH_VERSION_TAG:-}"
 AMESH_HOME="${AMESH_HOME:-$HOME/.local/share/amesh}"
