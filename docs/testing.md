@@ -22,6 +22,7 @@
 - The server owns integration tests for node registration, direct chat, continued chat via `session.input`, session cancel, and trigger allow or deny behavior over a real websocket port.
 - The server also covers authenticated node update dispatch, including rejection for offline nodes.
 - The server also covers authenticated node detect dispatch, including rejection for offline nodes.
+- The server also covers zero-agent node registration so a node still appears in topology before any local agent inventory is available.
 - The server also covers invalid registration-token rejection, resume via durable reconnect token, trigger-rule deletion, and static dashboard serving from the control-plane deployable.
 - The server smoke command exercises node registration, direct chat, denied routing, and allowed cross-node routing in one local flow.
 - The GitHub Actions `CI` workflow runs the root JavaScript gate, the server smoke flow through that gate, Go tests, and shell syntax checks on pull requests and on pushes to `main`.

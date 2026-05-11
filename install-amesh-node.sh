@@ -146,10 +146,15 @@ install -m 0755 "${extract_dir}/${binary_name}" "${binary_path}"
 if [[ ! -x "$ACPX_BIN" ]]; then
   log "installing managed acpx sidecar into ${ACPX_PREFIX}"
   npm install --global --prefix "$ACPX_PREFIX" "$ACPX_NPM_SPEC"
+else
+  log "managed acpx already present: ${ACPX_BIN}"
 fi
 
 if [[ ! -f "$CONFIG_PATH" ]]; then
+  log "no node config found; running detect into ${CONFIG_PATH}"
   env AMESH_ACPX_PATH="$ACPX_BIN" "$binary_path" detect --config "$CONFIG_PATH"
+else
+  log "reusing existing node config: ${CONFIG_PATH}"
 fi
 
 if [[ ! -f "$STATE_PATH" ]]; then
@@ -157,12 +162,15 @@ if [[ ! -f "$STATE_PATH" ]]; then
     fail "REGISTRATION_TOKEN is required for first-time registration"
   fi
 
+  log "no node state found; registering node ${NODE_ID} against ${SERVER_URL}"
   "$binary_path" register \
     --server "$SERVER_URL" \
     --token "$REGISTRATION_TOKEN" \
     --node-id "$NODE_ID" \
     --config "$CONFIG_PATH" \
     --state "$STATE_PATH"
+else
+  log "reusing existing node state: ${STATE_PATH}"
 fi
 
 cat >"$SERVICE_PATH" <<EOF
@@ -186,9 +194,18 @@ EOF
 if command -v systemctl >/dev/null 2>&1; then
   systemctl --user daemon-reload
   systemctl --user enable --now "$SERVICE_NAME"
+  sleep 2
+  if ! systemctl --user --quiet is-active "$SERVICE_NAME"; then
+    log "service failed to stay active: $SERVICE_NAME"
+    systemctl --user --no-pager --full status "$SERVICE_NAME" >&2 || true
+    journalctl --user -u "$SERVICE_NAME" -n 80 --no-pager >&2 || true
+    fail "amesh-node user service did not reach active state"
+  fi
   log "installed and started user service: $SERVICE_NAME"
+  log "service logs: journalctl --user -u ${SERVICE_NAME} -f"
 else
   log "systemctl not found; service file written to $SERVICE_PATH"
+  log "start manually: AMESH_ACPX_PATH='${ACPX_BIN}' '${binary_path}' run --state '${STATE_PATH}'"
 fi
 
 log "installed ${binary_path}"

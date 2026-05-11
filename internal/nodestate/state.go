@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 // File stores durable node credentials between register and run commands.
@@ -33,6 +34,9 @@ func Save(path string, file File) error {
 	bytes, err := json.MarshalIndent(file, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode node state %s: %w", path, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("mkdir node state dir for %s: %w", path, err)
 	}
 	if err := os.WriteFile(path, bytes, 0o600); err != nil {
 		return fmt.Errorf("write node state %s: %w", path, err)

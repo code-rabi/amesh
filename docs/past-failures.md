@@ -39,3 +39,9 @@
 - Consequence: topology overstated health. A dead or unreachable local agent process still appeared callable until an actual session failed.
 - Mitigation: the daemon now probes each configured ACPX agent locally and periodically resyncs only healthy agents, which lets the existing topology model mark failed agents offline.
 - Current status: covered by daemon-side Go tests for the health-filter path.
+
+## 2026-05-11: Remote install could look successful while the long-lived node never actually stayed up
+
+- The installer reported a completed install after writing the binary and service file, but it did not verify that the user service remained active or show enough detail about detect/register/state reuse.
+- Consequence: a host could look "installed" locally while the dashboard stayed empty and there was no immediate clue whether detection, registration, or service startup had failed.
+- Mitigation: the installer now logs each detect/register decision, fails fast if the systemd user service does not stay active, and prints service status plus recent journal lines. The daemon also logs detect, register, resume, and capability-sync milestones to stderr.

@@ -109,6 +109,58 @@ describe("server app", () => {
     socket.close();
   });
 
+  it("keeps a node in topology even when it advertises zero agents", async () => {
+    const socket = new WebSocket(`ws://${address}/ws?role=node&nodeId=node-empty`);
+    await waitForOpen(socket);
+    socket.send(
+      JSON.stringify({
+        type: "node.register",
+        requestId: "req_empty_1",
+        sessionId: null,
+        source: "node-empty",
+        target: "server",
+        payload: {
+          registrationToken: "token",
+          nodeName: "empty-node",
+          host: "empty.example",
+          labels: []
+        }
+      })
+    );
+    socket.send(
+      JSON.stringify({
+        type: "node.capabilities.sync",
+        requestId: "req_empty_2",
+        sessionId: null,
+        source: "node-empty",
+        target: "server",
+        payload: {
+          nodeId: "node-empty",
+          capabilities: []
+        }
+      })
+    );
+
+    await readNodeMessage(socket);
+    await waitForIdle();
+
+    const response = await injectAuthed(app, authCookie, {
+      method: "GET",
+      url: "/api/topology"
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "node-empty",
+          name: "empty-node"
+        })
+      ])
+    );
+    expect(response.json().agents).toEqual([]);
+    socket.close();
+  });
+
   it("rejects registration with an invalid bootstrap token when one is configured", async () => {
     const guardedApp = buildApp({
       dbPath: ":memory:",

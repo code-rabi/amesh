@@ -46,6 +46,10 @@ type retryableDaemonError struct {
 	err error
 }
 
+func logf(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, "amesh-node %s %s\n", time.Now().UTC().Format(time.RFC3339), fmt.Sprintf(format, args...))
+}
+
 func (err retryableDaemonError) Error() string {
 	return err.err.Error()
 }
@@ -201,6 +205,7 @@ func runDetect(ctx context.Context, configPath string) error {
 		nodeName = existing.NodeName
 	}
 
+	logf("detect start config=%s node=%s acpx=%s", configPath, nodeName, defaultACPXCommand())
 	detected := detectAgents(ctx, acpx.Runner{})
 	config := nodeconfig.File{
 		NodeName: nodeName,
@@ -209,6 +214,7 @@ func runDetect(ctx context.Context, configPath string) error {
 	if err := nodeconfig.Save(configPath, config); err != nil {
 		return err
 	}
+	logf("detect complete config=%s agents=%d", configPath, len(detected))
 	fmt.Fprintf(os.Stdout, "detected %d agent(s) and wrote %s\n", len(detected), configPath)
 	return nil
 }
@@ -359,6 +365,7 @@ func runRegister(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	logf("register start node=%s server=%s config=%s agents=%d", *nodeID, *serverURL, *configPath, len(config.Agents))
 
 	client := nodeclient.New(*serverURL + "&nodeId=" + *nodeID)
 	if err := client.Connect(ctx); err != nil {
@@ -381,6 +388,7 @@ func runRegister(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	logf("register acknowledged node=%s reconnect_token=present", result.NodeID)
 
 	if err := client.Send(ctx, nodeclient.Envelope{
 		Type:      "node.capabilities.sync",
@@ -394,14 +402,19 @@ func runRegister(ctx context.Context, args []string) error {
 	}); err != nil {
 		return err
 	}
+	logf("register capability sync sent node=%s capabilities=%d", *nodeID, len(config.Agents))
 	_ = client.Close()
 
-	return nodestate.Save(*statePath, nodestate.File{
+	if err := nodestate.Save(*statePath, nodestate.File{
 		NodeID:         result.NodeID,
 		ReconnectToken: result.ReconnectToken,
 		ServerURL:      *serverURL,
 		ConfigPath:     *configPath,
-	})
+	}); err != nil {
+		return err
+	}
+	logf("register complete node=%s state=%s", result.NodeID, *statePath)
+	return nil
 }
 
 func runDaemon(ctx context.Context, args []string, update updateRunner, detect detectRunner) error {
@@ -442,6 +455,7 @@ func runDaemon(ctx context.Context, args []string, update updateRunner, detect d
 	if err := ensureConfigPath(ctx, *configPath, detect); err != nil {
 		return err
 	}
+	logf("run start node=%s server=%s state=%s config=%s", *nodeID, *serverURL, *statePath, *configPath)
 
 	runner := acpx.Runner{}
 	sessions := newSessionStore()
@@ -567,6 +581,7 @@ func runDaemonLoop(
 	backoff := time.Second
 
 	for {
+		logf("run loop connect node=%s server=%s", nodeID, serverURL)
 		err := runDaemonSession(
 			ctx,
 			serverURL,
@@ -588,6 +603,7 @@ func runDaemonLoop(
 		if !errors.As(err, &retryable) {
 			return err
 		}
+		logf("run loop retry node=%s error=%v backoff=%s", nodeID, retryable.err, backoff)
 
 		if sleepErr := sleep(ctx, backoff); sleepErr != nil {
 			return nil
@@ -618,6 +634,7 @@ func runDaemonSession(
 	if err := client.Connect(ctx); err != nil {
 		return retryableDaemonError{err: err}
 	}
+	logf("session connected node=%s", nodeID)
 	defer func() {
 		_ = client.Close()
 	}()
@@ -645,6 +662,7 @@ func runDaemonSession(
 	if reply.Type != "node.resumed" {
 		return fmt.Errorf("unexpected resume reply %q", reply.Type)
 	}
+	logf("session resumed node=%s", nodeID)
 
 	if err := syncHealthyCapabilities(ctx, client, nodeID, configPath, probe); err != nil {
 		return retryableDaemonError{err: err}
@@ -669,14 +687,17 @@ func runDaemonSession(
 		}
 		switch envelope.Type {
 		case "session.start", "session.input":
+			logf("session command node=%s type=%s session=%s", nodeID, envelope.Type, deref(envelope.SessionID))
 			if err := startSession(sessionCtx, client, runner, sessions, configPath, nodeID, envelope); err != nil {
 				return retryableDaemonError{err: err}
 			}
 		case "session.cancel":
+			logf("session cancel node=%s session=%s", nodeID, deref(envelope.SessionID))
 			if err := cancelSession(sessionCtx, client, sessions, nodeID, envelope); err != nil {
 				return retryableDaemonError{err: err}
 			}
 		case "node.detect":
+			logf("detect command node=%s config=%s", nodeID, configPath)
 			if err := detect(sessionCtx, configPath); err != nil {
 				return fmt.Errorf("node detect failed: %w", err)
 			}
@@ -684,6 +705,7 @@ func runDaemonSession(
 				return retryableDaemonError{err: err}
 			}
 		case "node.update":
+			logf("update command node=%s", nodeID)
 			if err := update(sessionCtx, os.Stdout, os.Stderr); err != nil {
 				return fmt.Errorf("node update failed: %w", err)
 			}
@@ -704,6 +726,7 @@ func syncHealthyCapabilities(
 		return fmt.Errorf("load config %s: %w", configPath, err)
 	}
 	capabilities := filterHealthyAgents(ctx, config.Agents, probe)
+	logf("capability sync node=%s config=%s configured=%d healthy=%d", nodeID, configPath, len(config.Agents), len(capabilities))
 	return client.Send(ctx, nodeclient.Envelope{
 		Type:      "node.capabilities.sync",
 		RequestID: fmt.Sprintf("sync-%d", time.Now().UnixNano()),
