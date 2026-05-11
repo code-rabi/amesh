@@ -8,18 +8,18 @@ AMESH_HOME="${AMESH_HOME:-$HOME/.local/share/amesh}"
 ACPX_PREFIX="${ACPX_PREFIX:-$AMESH_HOME/acpx}"
 ACPX_NPM_SPEC="${ACPX_NPM_SPEC:-acpx@latest}"
 AMESH_ACPX_PATH="${AMESH_ACPX_PATH:-$ACPX_PREFIX/bin/acpx}"
-CONFIG_PATH="${CONFIG_PATH:-examples/agents.json}"
+CONFIG_PATH="${CONFIG_PATH:-.amesh-agents.json}"
 STATE_PATH="${STATE_PATH:-.amesh-node-state.json}"
-
-if [[ ! -f "$CONFIG_PATH" ]]; then
-  echo "config file not found: $CONFIG_PATH" >&2
-  exit 1
-fi
 
 mkdir -p "$AMESH_HOME"
 
 if [[ ! -x "$AMESH_ACPX_PATH" ]]; then
   npm install --global --prefix "$ACPX_PREFIX" "$ACPX_NPM_SPEC"
+fi
+
+if [[ ! -f "$CONFIG_PATH" ]]; then
+  AMESH_ACPX_PATH="$AMESH_ACPX_PATH" go run ./cmd/amesh-node detect \
+    --config "$CONFIG_PATH"
 fi
 
 if [[ ! -f "$STATE_PATH" ]]; then

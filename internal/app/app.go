@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime/debug"
 	"slices"
 	"strings"
@@ -39,6 +40,7 @@ type sleeper func(ctx context.Context, delay time.Duration) error
 type capabilityProber func(ctx context.Context, agent nodeconfig.AgentConfig) bool
 
 type updateRunner func(ctx context.Context, stdout, stderr io.Writer) error
+type detectRunner func(ctx context.Context, configPath string) error
 
 type retryableDaemonError struct {
 	err error
@@ -54,19 +56,21 @@ func (err retryableDaemonError) Unwrap() error {
 
 // Run executes the node daemon CLI.
 func Run(ctx context.Context, args []string) error {
-	return run(ctx, args, runUpdate)
+	return run(ctx, args, runUpdate, runDetect)
 }
 
-func run(ctx context.Context, args []string, update updateRunner) error {
+func run(ctx context.Context, args []string, update updateRunner, detect detectRunner) error {
 	if len(args) == 0 {
-		return errors.New("expected subcommand: register, run, update, or acp")
+		return errors.New("expected subcommand: register, run, detect, update, or acp")
 	}
 
 	switch args[0] {
 	case "register":
 		return runRegister(ctx, args[1:])
 	case "run":
-		return runDaemon(ctx, args[1:], update)
+		return runDaemon(ctx, args[1:], update, detect)
+	case "detect":
+		return runDetectCommand(ctx, args[1:], detect)
 	case "update":
 		return update(ctx, os.Stdout, os.Stderr)
 	case "acp":
@@ -144,17 +148,213 @@ func currentInstallDir() (string, bool) {
 	return filepath.Dir(executable), true
 }
 
-func runRegister(ctx context.Context, args []string) error {
-	flags := flag.NewFlagSet("register", flag.ContinueOnError)
-	serverURL := flags.String("server", "ws://localhost:3001/ws?role=node", "control plane websocket URL")
-	token := flags.String("token", "", "registration token")
-	nodeID := flags.String("node-id", fmt.Sprintf("node-%d", time.Now().Unix()), "persistent node ID")
-	configPath := flags.String("config", "examples/agents.json", "path to agents config")
+func defaultConfigPath() string {
+	if path := strings.TrimSpace(os.Getenv("AMESH_NODE_CONFIG_PATH")); path != "" {
+		return path
+	}
+	return ".amesh-agents.json"
+}
+
+type detectableAgent struct {
+	ID        string
+	Name      string
+	ACPXAgent string
+}
+
+var detectableAgents = []detectableAgent{
+	{ID: "agent-claude", Name: "Claude", ACPXAgent: "claude"},
+	{ID: "agent-codex", Name: "Codex", ACPXAgent: "codex"},
+	{ID: "agent-openclaw", Name: "OpenClaw", ACPXAgent: "openclaw"},
+	{ID: "agent-pi", Name: "PI", ACPXAgent: "pi"},
+	{ID: "agent-gemini", Name: "Gemini", ACPXAgent: "gemini"},
+	{ID: "agent-cursor", Name: "Cursor", ACPXAgent: "cursor"},
+	{ID: "agent-copilot", Name: "Copilot", ACPXAgent: "copilot"},
+	{ID: "agent-droid", Name: "Droid", ACPXAgent: "droid"},
+	{ID: "agent-iflow", Name: "iFlow", ACPXAgent: "iflow"},
+	{ID: "agent-kilocode", Name: "Kilo Code", ACPXAgent: "kilocode"},
+	{ID: "agent-kimi", Name: "Kimi", ACPXAgent: "kimi"},
+	{ID: "agent-kiro", Name: "Kiro", ACPXAgent: "kiro"},
+	{ID: "agent-opencode", Name: "OpenCode", ACPXAgent: "opencode"},
+	{ID: "agent-qoder", Name: "Qoder", ACPXAgent: "qoder"},
+	{ID: "agent-qwen", Name: "Qwen", ACPXAgent: "qwen"},
+	{ID: "agent-trae", Name: "Trae", ACPXAgent: "trae"},
+}
+
+var acpxHelpAgentLine = regexp.MustCompile(`^\s{2}([a-z0-9][a-z0-9-]*)\s+\[options\]\s+\[prompt\.\.\.\]\s+Use\s+(.+?)\s+agent\s*$`)
+
+func defaultACPXCommand() string {
+	if path := strings.TrimSpace(os.Getenv("AMESH_ACPX_PATH")); path != "" {
+		return path
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		managed := filepath.Join(home, ".local", "share", "amesh", "acpx", "bin", "acpx")
+		if _, err := os.Stat(managed); err == nil {
+			return managed
+		}
+	}
+	return "acpx"
+}
+
+func runDetect(ctx context.Context, configPath string) error {
+	nodeName := hostname()
+	if existing, err := nodeconfig.Load(configPath); err == nil && strings.TrimSpace(existing.NodeName) != "" {
+		nodeName = existing.NodeName
+	}
+
+	detected := detectAgents(ctx, acpx.Runner{})
+	config := nodeconfig.File{
+		NodeName: nodeName,
+		Agents:   detected,
+	}
+	if err := nodeconfig.Save(configPath, config); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stdout, "detected %d agent(s) and wrote %s\n", len(detected), configPath)
+	return nil
+}
+
+func runDetectCommand(ctx context.Context, args []string, detect detectRunner) error {
+	flags := flag.NewFlagSet("detect", flag.ContinueOnError)
+	configPath := flags.String("config", defaultConfigPath(), "path to agents config")
 	statePath := flags.String("state", ".amesh-node-state.json", "path to durable node state")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 
+	resolvedConfigPath := *configPath
+	if resolvedConfigPath == defaultConfigPath() {
+		if state, err := nodestate.Load(*statePath); err == nil && strings.TrimSpace(state.ConfigPath) != "" {
+			resolvedConfigPath = state.ConfigPath
+		}
+	}
+	return detect(ctx, resolvedConfigPath)
+}
+
+func detectAgents(ctx context.Context, runner acpx.Runner) []nodeconfig.AgentConfig {
+	candidates := detectableAgents
+	if parsed, err := detectableAgentsFromACPXHelp(ctx, defaultACPXCommand()); err == nil && len(parsed) > 0 {
+		candidates = parsed
+	}
+
+	detectedCandidates := detectInstalledAgents(candidates)
+	agents := make([]nodeconfig.AgentConfig, 0, len(candidates))
+	for _, candidate := range detectedCandidates {
+		agent := nodeconfig.AgentConfig{
+			ID:        candidate.ID,
+			Name:      candidate.Name,
+			ACPXAgent: candidate.ACPXAgent,
+			Command:   defaultACPXCommand(),
+			Labels:    []string{"detected"},
+		}
+		agents = append(agents, agent)
+	}
+	return agents
+}
+
+func detectInstalledAgents(candidates []detectableAgent) []detectableAgent {
+	detected := make([]detectableAgent, 0, len(candidates))
+	for _, candidate := range candidates {
+		if _, err := exec.LookPath(candidate.ACPXAgent); err == nil {
+			detected = append(detected, candidate)
+		}
+	}
+	return detected
+}
+
+func detectableAgentsFromACPXHelp(ctx context.Context, command string) ([]detectableAgent, error) {
+	output, err := exec.CommandContext(ctx, command, "--help").CombinedOutput()
+	if err != nil {
+		return nil, err
+	}
+	return parseDetectableAgentsFromACPXHelp(string(output)), nil
+}
+
+func parseDetectableAgentsFromACPXHelp(help string) []detectableAgent {
+	lines := strings.Split(help, "\n")
+	agents := make([]detectableAgent, 0, len(lines))
+	for _, line := range lines {
+		matches := acpxHelpAgentLine.FindStringSubmatch(line)
+		if len(matches) != 3 {
+			continue
+		}
+		command := matches[1]
+		name := strings.TrimSpace(matches[2])
+		if command == "" || name == "" {
+			continue
+		}
+		agents = append(agents, detectableAgent{
+			ID:        "agent-" + command,
+			Name:      displayNameForAgent(command, name),
+			ACPXAgent: command,
+		})
+	}
+	return agents
+}
+
+func displayNameForAgent(command string, fallback string) string {
+	switch command {
+	case "claude":
+		return "Claude"
+	case "codex":
+		return "Codex"
+	case "openclaw":
+		return "OpenClaw"
+	case "pi":
+		return "PI"
+	case "gemini":
+		return "Gemini"
+	case "cursor":
+		return "Cursor"
+	case "copilot":
+		return "Copilot"
+	case "droid":
+		return "Droid"
+	case "iflow":
+		return "iFlow"
+	case "kimi":
+		return "Kimi"
+	case "kiro":
+		return "Kiro"
+	case "kilocode":
+		return "Kilo Code"
+	case "qoder":
+		return "Qoder"
+	case "qwen":
+		return "Qwen"
+	case "trae":
+		return "Trae"
+	case "opencode":
+		return "OpenCode"
+	}
+	if fallback != "" {
+		return strings.ToUpper(fallback[:1]) + fallback[1:]
+	}
+	return strings.ToUpper(command[:1]) + command[1:]
+}
+
+func ensureConfigPath(ctx context.Context, configPath string, detect detectRunner) error {
+	if _, err := os.Stat(configPath); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("stat config %s: %w", configPath, err)
+	}
+	return detect(ctx, configPath)
+}
+
+func runRegister(ctx context.Context, args []string) error {
+	flags := flag.NewFlagSet("register", flag.ContinueOnError)
+	serverURL := flags.String("server", "ws://localhost:3001/ws?role=node", "control plane websocket URL")
+	token := flags.String("token", "", "registration token")
+	nodeID := flags.String("node-id", fmt.Sprintf("node-%d", time.Now().Unix()), "persistent node ID")
+	configPath := flags.String("config", defaultConfigPath(), "path to agents config")
+	statePath := flags.String("state", ".amesh-node-state.json", "path to durable node state")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+
+	if err := ensureConfigPath(ctx, *configPath, runDetect); err != nil {
+		return err
+	}
 	config, err := nodeconfig.Load(*configPath)
 	if err != nil {
 		return err
@@ -204,12 +404,12 @@ func runRegister(ctx context.Context, args []string) error {
 	})
 }
 
-func runDaemon(ctx context.Context, args []string, update updateRunner) error {
+func runDaemon(ctx context.Context, args []string, update updateRunner, detect detectRunner) error {
 	flags := flag.NewFlagSet("run", flag.ContinueOnError)
 	serverURL := flags.String("server", "ws://localhost:3001/ws?role=node", "control plane websocket URL")
 	nodeID := flags.String("node-id", "", "persistent node ID")
 	reconnectToken := flags.String("reconnect-token", "", "durable reconnect token")
-	configPath := flags.String("config", "examples/agents.json", "path to agents config")
+	configPath := flags.String("config", defaultConfigPath(), "path to agents config")
 	statePath := flags.String("state", ".amesh-node-state.json", "path to durable node state")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -227,7 +427,7 @@ func runDaemon(ctx context.Context, args []string, update updateRunner) error {
 			if *serverURL == "ws://localhost:3001/ws?role=node" && state.ServerURL != "" {
 				*serverURL = state.ServerURL
 			}
-			if *configPath == "examples/agents.json" && state.ConfigPath != "" {
+			if *configPath == defaultConfigPath() && state.ConfigPath != "" {
 				*configPath = state.ConfigPath
 			}
 		}
@@ -239,8 +439,7 @@ func runDaemon(ctx context.Context, args []string, update updateRunner) error {
 		return errors.New("reconnect-token is required, either via --reconnect-token or saved state")
 	}
 
-	config, err := nodeconfig.Load(*configPath)
-	if err != nil {
+	if err := ensureConfigPath(ctx, *configPath, detect); err != nil {
 		return err
 	}
 
@@ -251,7 +450,7 @@ func runDaemon(ctx context.Context, args []string, update updateRunner) error {
 		*serverURL,
 		*nodeID,
 		*reconnectToken,
-		config,
+		*configPath,
 		runner,
 		sessions,
 		func(serverURL string) daemonClient {
@@ -260,6 +459,7 @@ func runDaemon(ctx context.Context, args []string, update updateRunner) error {
 		probeAgentHealth(acpx.Runner{}),
 		sleepWithContext,
 		update,
+		detect,
 	)
 }
 
@@ -268,10 +468,14 @@ func startSession(
 	client daemonClient,
 	runner acpx.Runner,
 	sessions *sessionStore,
-	config nodeconfig.File,
+	configPath string,
 	nodeID string,
 	envelope nodeclient.Envelope,
 ) error {
+	config, err := nodeconfig.Load(configPath)
+	if err != nil {
+		return fmt.Errorf("load config %s: %w", configPath, err)
+	}
 	agentID, _ := envelope.Payload["agentId"].(string)
 	prompt, _ := envelope.Payload["prompt"].(string)
 	sessionID := deref(envelope.SessionID)
@@ -351,13 +555,14 @@ func runDaemonLoop(
 	serverURL string,
 	nodeID string,
 	reconnectToken string,
-	config nodeconfig.File,
+	configPath string,
 	runner acpx.Runner,
 	sessions *sessionStore,
 	clientFactory daemonClientFactory,
 	probe capabilityProber,
 	sleep sleeper,
 	update updateRunner,
+	detect detectRunner,
 ) error {
 	backoff := time.Second
 
@@ -367,12 +572,13 @@ func runDaemonLoop(
 			serverURL,
 			nodeID,
 			reconnectToken,
-			config,
+			configPath,
 			runner,
 			sessions,
 			clientFactory,
 			probe,
 			update,
+			detect,
 		)
 		if err == nil || errors.Is(err, context.Canceled) {
 			return nil
@@ -400,12 +606,13 @@ func runDaemonSession(
 	serverURL string,
 	nodeID string,
 	reconnectToken string,
-	config nodeconfig.File,
+	configPath string,
 	runner acpx.Runner,
 	sessions *sessionStore,
 	clientFactory daemonClientFactory,
 	probe capabilityProber,
 	update updateRunner,
+	detect detectRunner,
 ) error {
 	client := clientFactory(serverURL + "&nodeId=" + nodeID)
 	if err := client.Connect(ctx); err != nil {
@@ -439,7 +646,7 @@ func runDaemonSession(
 		return fmt.Errorf("unexpected resume reply %q", reply.Type)
 	}
 
-	if err := syncHealthyCapabilities(ctx, client, nodeID, config, probe); err != nil {
+	if err := syncHealthyCapabilities(ctx, client, nodeID, configPath, probe); err != nil {
 		return retryableDaemonError{err: err}
 	}
 
@@ -449,7 +656,7 @@ func runDaemonSession(
 		_ = client.HeartbeatLoop(sessionCtx, nodeID)
 	}()
 	go func() {
-		_ = capabilitySyncLoop(sessionCtx, client, nodeID, config, probe)
+		_ = capabilitySyncLoop(sessionCtx, client, nodeID, configPath, probe)
 	}()
 
 	for {
@@ -462,11 +669,18 @@ func runDaemonSession(
 		}
 		switch envelope.Type {
 		case "session.start", "session.input":
-			if err := startSession(sessionCtx, client, runner, sessions, config, nodeID, envelope); err != nil {
+			if err := startSession(sessionCtx, client, runner, sessions, configPath, nodeID, envelope); err != nil {
 				return retryableDaemonError{err: err}
 			}
 		case "session.cancel":
 			if err := cancelSession(sessionCtx, client, sessions, nodeID, envelope); err != nil {
+				return retryableDaemonError{err: err}
+			}
+		case "node.detect":
+			if err := detect(sessionCtx, configPath); err != nil {
+				return fmt.Errorf("node detect failed: %w", err)
+			}
+			if err := syncHealthyCapabilities(sessionCtx, client, nodeID, configPath, probe); err != nil {
 				return retryableDaemonError{err: err}
 			}
 		case "node.update":
@@ -482,9 +696,13 @@ func syncHealthyCapabilities(
 	ctx context.Context,
 	client daemonClient,
 	nodeID string,
-	config nodeconfig.File,
+	configPath string,
 	probe capabilityProber,
 ) error {
+	config, err := nodeconfig.Load(configPath)
+	if err != nil {
+		return fmt.Errorf("load config %s: %w", configPath, err)
+	}
 	capabilities := filterHealthyAgents(ctx, config.Agents, probe)
 	return client.Send(ctx, nodeclient.Envelope{
 		Type:      "node.capabilities.sync",
@@ -502,7 +720,7 @@ func capabilitySyncLoop(
 	ctx context.Context,
 	client daemonClient,
 	nodeID string,
-	config nodeconfig.File,
+	configPath string,
 	probe capabilityProber,
 ) error {
 	ticker := time.NewTicker(15 * time.Second)
@@ -513,7 +731,7 @@ func capabilitySyncLoop(
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			if err := syncHealthyCapabilities(ctx, client, nodeID, config, probe); err != nil {
+			if err := syncHealthyCapabilities(ctx, client, nodeID, configPath, probe); err != nil {
 				return err
 			}
 		}
@@ -536,7 +754,7 @@ func filterHealthyAgents(
 
 func probeAgentHealth(runner acpx.Runner) capabilityProber {
 	return func(ctx context.Context, agent nodeconfig.AgentConfig) bool {
-		probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		probeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
 
 		return runner.Ensure(probeCtx, acpx.RunRequest{

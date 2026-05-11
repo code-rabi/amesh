@@ -71,6 +71,16 @@ export async function requestNodeUpdate(nodeId: string): Promise<void> {
   }
 }
 
+export async function requestNodeDetect(nodeId: string): Promise<void> {
+  const response = await apiFetch(`/api/nodes/${nodeId}/detect`, {
+    method: "POST"
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(body?.message ?? "Detection request failed");
+  }
+}
+
 export async function createTriggerRule(input: {
   sourceAgentId: string;
   targetAgentId: string;

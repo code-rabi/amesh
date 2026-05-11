@@ -4,7 +4,11 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
+	"reflect"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -61,7 +65,7 @@ func TestRunDaemonLoopReconnectsAfterDisconnect(t *testing.T) {
 			"ws://example.invalid/ws?role=node",
 			"node-a",
 			"token-a",
-			nodeconfig.File{},
+			writeConfig(t, nodeconfig.File{NodeName: "node-a"}),
 			acpx.Runner{},
 			newSessionStore(),
 			func(_ string) daemonClient {
@@ -85,6 +89,10 @@ func TestRunDaemonLoopReconnectsAfterDisconnect(t *testing.T) {
 			},
 			func(context.Context, io.Writer, io.Writer) error {
 				t.Fatal("unexpected update invocation")
+				return nil
+			},
+			func(context.Context, string) error {
+				t.Fatal("unexpected detect invocation")
 				return nil
 			},
 		)
@@ -112,15 +120,42 @@ func TestRunDispatchesUpdateSubcommand(t *testing.T) {
 	t.Parallel()
 
 	called := false
-	err := run(context.Background(), []string{"update"}, func(context.Context, io.Writer, io.Writer) error {
-		called = true
-		return nil
-	})
+	err := run(
+		context.Background(),
+		[]string{"update"},
+		func(context.Context, io.Writer, io.Writer) error {
+			called = true
+			return nil
+		},
+		func(context.Context, string) error { return nil },
+	)
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
 	if !called {
 		t.Fatal("expected update runner to be called")
+	}
+}
+
+func TestRunDispatchesDetectSubcommand(t *testing.T) {
+	t.Parallel()
+
+	configPath := filepath.Join(t.TempDir(), "agents.json")
+	called := false
+	err := run(
+		context.Background(),
+		[]string{"detect", "--config", configPath},
+		func(context.Context, io.Writer, io.Writer) error { return nil },
+		func(_ context.Context, path string) error {
+			called = path == configPath
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	if !called {
+		t.Fatal("expected detect runner to be called")
 	}
 }
 
@@ -140,13 +175,17 @@ func TestRunDaemonSessionHandlesNodeUpdate(t *testing.T) {
 		"ws://example.invalid/ws?role=node",
 		"node-a",
 		"token-a",
-		nodeconfig.File{},
+		writeConfig(t, nodeconfig.File{NodeName: "node-a"}),
 		acpx.Runner{},
 		newSessionStore(),
 		func(string) daemonClient { return client },
 		func(context.Context, nodeconfig.AgentConfig) bool { return true },
 		func(context.Context, io.Writer, io.Writer) error {
 			called = true
+			return nil
+		},
+		func(context.Context, string) error {
+			t.Fatal("unexpected detect invocation")
 			return nil
 		},
 	)
@@ -157,6 +196,52 @@ func TestRunDaemonSessionHandlesNodeUpdate(t *testing.T) {
 		t.Fatal("expected update runner to be called")
 	}
 	assertEnvelopeTypes(t, client.sent, []string{"node.resume", "node.capabilities.sync"})
+}
+
+func TestRunDaemonSessionHandlesNodeDetect(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	client := &fakeDaemonClient{
+		readResults: []fakeReadResult{
+			{envelope: nodeclient.Envelope{Type: "node.resumed"}},
+			{envelope: nodeclient.Envelope{Type: "node.detect"}},
+		},
+		blockReadsUntilCanceled: true,
+	}
+
+	called := false
+	err := runDaemonSession(
+		ctx,
+		"ws://example.invalid/ws?role=node",
+		"node-a",
+		"token-a",
+		writeConfig(t, nodeconfig.File{
+			NodeName: "node-a",
+			Agents: []nodeconfig.AgentConfig{
+				{ID: "agent-a", Name: "Agent A", ACPXAgent: "claude"},
+			},
+		}),
+		acpx.Runner{},
+		newSessionStore(),
+		func(string) daemonClient { return client },
+		func(context.Context, nodeconfig.AgentConfig) bool { return true },
+		func(context.Context, io.Writer, io.Writer) error { return nil },
+		func(_ context.Context, path string) error {
+			called = true
+			cancel()
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("runDaemonSession() error = %v", err)
+	}
+	if !called {
+		t.Fatal("expected detect runner to be called")
+	}
+	assertEnvelopeTypes(t, client.sent, []string{"node.resume", "node.capabilities.sync", "node.capabilities.sync"})
 }
 
 func TestFilterHealthyAgents(t *testing.T) {
@@ -173,6 +258,113 @@ func TestFilterHealthyAgents(t *testing.T) {
 
 	if len(got) != 1 || got[0].ID != "healthy" {
 		t.Fatalf("filterHealthyAgents() = %#v, want only healthy agent", got)
+	}
+}
+
+func TestParseDetectableAgentsFromACPXHelp(t *testing.T) {
+	t.Parallel()
+
+	help := `
+Commands:
+  openclaw [options] [prompt...]          Use openclaw agent
+  codex [options] [prompt...]             Use codex agent
+  claude [options] [prompt...]            Use claude agent
+  gemini [options] [prompt...]            Use gemini agent
+  cursor [options] [prompt...]            Use cursor agent
+  copilot [options] [prompt...]           Use copilot agent
+  droid [options] [prompt...]             Use droid agent
+  iflow [options] [prompt...]             Use iflow agent
+  kilocode [options] [prompt...]          Use kilocode agent
+  kimi [options] [prompt...]              Use kimi agent
+  kiro [options] [prompt...]              Use kiro agent
+  opencode [options] [prompt...]          Use opencode agent
+  qoder [options] [prompt...]             Use qoder agent
+  qwen [options] [prompt...]              Use qwen agent
+  trae [options] [prompt...]              Use trae agent
+  prompt [options] [prompt...]            Prompt using codex by default
+`
+
+	got := parseDetectableAgentsFromACPXHelp(help)
+	want := []detectableAgent{
+		{ID: "agent-openclaw", Name: "OpenClaw", ACPXAgent: "openclaw"},
+		{ID: "agent-codex", Name: "Codex", ACPXAgent: "codex"},
+		{ID: "agent-claude", Name: "Claude", ACPXAgent: "claude"},
+		{ID: "agent-gemini", Name: "Gemini", ACPXAgent: "gemini"},
+		{ID: "agent-cursor", Name: "Cursor", ACPXAgent: "cursor"},
+		{ID: "agent-copilot", Name: "Copilot", ACPXAgent: "copilot"},
+		{ID: "agent-droid", Name: "Droid", ACPXAgent: "droid"},
+		{ID: "agent-iflow", Name: "iFlow", ACPXAgent: "iflow"},
+		{ID: "agent-kilocode", Name: "Kilo Code", ACPXAgent: "kilocode"},
+		{ID: "agent-kimi", Name: "Kimi", ACPXAgent: "kimi"},
+		{ID: "agent-kiro", Name: "Kiro", ACPXAgent: "kiro"},
+		{ID: "agent-opencode", Name: "OpenCode", ACPXAgent: "opencode"},
+		{ID: "agent-qoder", Name: "Qoder", ACPXAgent: "qoder"},
+		{ID: "agent-qwen", Name: "Qwen", ACPXAgent: "qwen"},
+		{ID: "agent-trae", Name: "Trae", ACPXAgent: "trae"},
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("parseDetectableAgentsFromACPXHelp() = %#v, want %#v", got, want)
+	}
+}
+
+func TestDefaultACPXCommandFallsBackToManagedInstall(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AMESH_ACPX_PATH", "")
+
+	managed := filepath.Join(home, ".local", "share", "amesh", "acpx", "bin", "acpx")
+	writeExecutable(t, managed, "#!/bin/sh\nexit 0\n")
+
+	if got := defaultACPXCommand(); got != managed {
+		t.Fatalf("defaultACPXCommand() = %q, want %q", got, managed)
+	}
+}
+
+func TestDetectAgentsFindsInstalledAgentsWithoutHealthProbe(t *testing.T) {
+	home := t.TempDir()
+	binDir := filepath.Join(t.TempDir(), "bin")
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", binDir)
+	t.Setenv("AMESH_ACPX_PATH", "")
+
+	managed := filepath.Join(home, ".local", "share", "amesh", "acpx", "bin", "acpx")
+	writeExecutable(t, managed, `#!/bin/sh
+if [ "$1" = "--help" ]; then
+cat <<'EOF'
+Commands:
+  codex [options] [prompt...]             Use codex agent
+  claude [options] [prompt...]            Use claude agent
+  gemini [options] [prompt...]            Use gemini agent
+EOF
+exit 0
+fi
+exit 1
+`)
+	writeExecutable(t, filepath.Join(binDir, "codex"), "#!/bin/sh\nexit 0\n")
+	writeExecutable(t, filepath.Join(binDir, "claude"), "#!/bin/sh\nexit 0\n")
+
+	got := detectAgents(context.Background(), acpx.Runner{})
+	slices.SortFunc(got, func(a, b nodeconfig.AgentConfig) int {
+		return strings.Compare(a.ID, b.ID)
+	})
+	want := []nodeconfig.AgentConfig{
+		{
+			ID:        "agent-claude",
+			Name:      "Claude",
+			ACPXAgent: "claude",
+			Command:   managed,
+			Labels:    []string{"detected"},
+		},
+		{
+			ID:        "agent-codex",
+			Name:      "Codex",
+			ACPXAgent: "codex",
+			Command:   managed,
+			Labels:    []string{"detected"},
+		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("detectAgents() = %#v, want %#v", got, want)
 	}
 }
 
@@ -255,5 +447,26 @@ func assertEnvelopeTypes(t *testing.T, envelopes []nodeclient.Envelope, want []s
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("envelope types = %v, want %v", got, want)
+	}
+}
+
+func writeConfig(t *testing.T, config nodeconfig.File) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "agents.json")
+	if err := nodeconfig.Save(path, config); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+	return path
+}
+
+func writeExecutable(t *testing.T, path string, contents string) {
+	t.Helper()
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", path, err)
+	}
+	if err := os.WriteFile(path, []byte(contents), 0o755); err != nil {
+		t.Fatalf("write %s: %v", path, err)
 	}
 }
