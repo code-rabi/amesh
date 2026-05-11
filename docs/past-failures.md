@@ -1,5 +1,11 @@
 # Past Failures
 
+## 2026-05-11: Server smoke drifted from browser auth
+
+- The smoke script still called browser-facing session and trigger APIs anonymously after the server moved those routes behind cookie auth.
+- Consequence: `pnpm --filter @amesh/server smoke` crashed before it could validate the MVP path, even though the rest of the JS test suite stayed green.
+- Mitigation: the smoke flow now logs in first, and the root `corepack pnpm check` gate includes smoke so GitHub Actions catches the same regression path.
+
 ## 2026-05-11: Missing Go toolchain in local automation
 
 - The workspace initially lacked a preinstalled Go toolchain, which blocked daemon compile and runtime verification.

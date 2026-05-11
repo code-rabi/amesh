@@ -6,6 +6,12 @@
 - `pnpm typecheck`
 - `pnpm lint`
 - `pnpm --filter @amesh/server smoke`
+- `go test ./...`
+- `bash -n scripts/dev-daemon.sh`
+- `sh -n install-amesh-node.sh`
+- `sh -n scripts/install-amesh-node.sh`
+
+`corepack pnpm check` is the root JavaScript gate and now includes the server smoke flow so local verification matches CI.
 
 ## MVP coverage
 
@@ -14,5 +20,6 @@
 - The server also covers authenticated node update dispatch, including rejection for offline nodes.
 - The server also covers invalid registration-token rejection, resume via durable reconnect token, trigger-rule deletion, and static dashboard serving from the control-plane deployable.
 - The server smoke command exercises node registration, direct chat, denied routing, and allowed cross-node routing in one local flow.
+- The GitHub Actions `CI` workflow runs the root JavaScript gate, the server smoke flow through that gate, Go tests, and shell syntax checks on pull requests and on pushes to `main`.
 - The web app owns UI coverage for topology rendering and session history recovery after refresh.
 - The Go daemon owns table-driven tests for config loading, reconnect logic, update command dispatch, and `acpx` process lifecycle including streamed output and cancellation.
