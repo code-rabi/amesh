@@ -5,7 +5,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -20,7 +23,7 @@ import (
 // Run executes the node daemon CLI.
 func Run(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return errors.New("expected subcommand: register or run")
+		return errors.New("expected subcommand: register, run, or update")
 	}
 
 	switch args[0] {
@@ -28,9 +31,53 @@ func Run(ctx context.Context, args []string) error {
 		return runRegister(ctx, args[1:])
 	case "run":
 		return runDaemon(ctx, args[1:])
+	case "update":
+		return runUpdate(ctx, os.Stdout, os.Stderr)
 	default:
 		return fmt.Errorf("unknown subcommand %q", args[0])
 	}
+}
+
+func runUpdate(ctx context.Context, stdout, stderr io.Writer) error {
+	if _, err := exec.LookPath("bash"); err != nil {
+		return errors.New("required CLI missing: bash")
+	}
+	if _, err := exec.LookPath("curl"); err != nil {
+		return errors.New("required CLI missing: curl")
+	}
+
+	repo := os.Getenv("AMESH_REPO")
+	if repo == "" {
+		repo = "NitayRabi/amesh"
+	}
+	installerURL := os.Getenv("AMESH_INSTALL_URL")
+	if installerURL == "" {
+		installerURL = fmt.Sprintf("https://raw.githubusercontent.com/%s/main/install-amesh-node.sh", repo)
+	}
+
+	cmd := exec.CommandContext(ctx, "bash", "-c", `set -euo pipefail; curl -fsSL "$AMESH_INSTALL_URL" | bash`)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	cmd.Env = append(os.Environ(), "AMESH_INSTALL_URL="+installerURL)
+	if os.Getenv("INSTALL_DIR") == "" {
+		if installDir, ok := currentInstallDir(); ok {
+			cmd.Env = append(cmd.Env, "INSTALL_DIR="+installDir)
+		}
+	}
+
+	fmt.Fprintf(stdout, "updating amesh-node from %s\n", installerURL)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("update failed: %w", err)
+	}
+	return nil
+}
+
+func currentInstallDir() (string, bool) {
+	executable, err := os.Executable()
+	if err != nil {
+		return "", false
+	}
+	return filepath.Dir(executable), true
 }
 
 func runRegister(ctx context.Context, args []string) error {
@@ -230,7 +277,9 @@ func startSession(
 		defer sessions.clearRunning(sessionID)
 		output, err := runner.Run(runCtx, acpx.RunRequest{
 			Command:    target.Command,
-			Args:       append(target.Args, target.ACPXAgent),
+			Args:       target.Args,
+			Agent:      target.ACPXAgent,
+			Session:    sessionID,
 			WorkingDir: target.CWD,
 			Env:        envList(target.Env),
 			Stdin:      aggregatedPrompt,
@@ -301,10 +350,10 @@ func deref(value *string) string {
 }
 
 type sessionStore struct {
-	mu       sync.Mutex
-	prompts  map[string][]string
-	cancels  map[string]context.CancelFunc
-	running  map[string]bool
+	mu      sync.Mutex
+	prompts map[string][]string
+	cancels map[string]context.CancelFunc
+	running map[string]bool
 }
 
 func newSessionStore() *sessionStore {

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
+	"strings"
 )
 
 // AgentConfig describes one local capability exposed by the node daemon.
@@ -44,10 +46,23 @@ func Load(path string) (File, error) {
 		if agent.ID == "" || agent.Name == "" || agent.ACPXAgent == "" {
 			return File{}, fmt.Errorf("decode config %s: each agent needs id, name, and acpxAgent", path)
 		}
-		if agent.Command == "" {
-			file.Agents[index].Command = "acpx"
+		if agent.Command == "" || strings.TrimSpace(agent.Command) == "acpx" {
+			file.Agents[index].Command = defaultACPXCommand()
+		}
+		if slices.Equal(agent.Args, []string{"run"}) {
+			file.Agents[index].Args = []string{}
+		}
+		if file.Agents[index].Args == nil {
+			file.Agents[index].Args = []string{}
 		}
 	}
 
 	return file, nil
+}
+
+func defaultACPXCommand() string {
+	if path := strings.TrimSpace(os.Getenv("AMESH_ACPX_PATH")); path != "" {
+		return path
+	}
+	return "acpx"
 }

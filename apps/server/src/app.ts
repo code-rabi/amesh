@@ -135,139 +135,149 @@ export function buildApp(options: AppOptions = {}) {
 
     let boundNodeId = nodeId ?? "";
     socket.on("message", (data) => {
-      const envelope = parseProtocolEnvelope(JSON.parse(String(data)));
-      switch (envelope.type) {
-        case "node.register": {
-          const payload = nodeRegistrationPayloadSchema.parse(
-            envelope.payload
-          ) as NodeRegistrationPayload;
-          if (registrationToken && payload.registrationToken !== registrationToken) {
-            websocketSend(socket, {
-              type: "node.registration.denied",
-              payload: {
-                reason: "invalid_registration_token"
-              }
-            });
-            socket.close();
-            break;
-          }
-          const node = repository.registerNode({
-            id: envelope.source,
-            name: payload.nodeName,
-            host: payload.host,
-            labels: payload.labels
-          });
-          boundNodeId = node.id;
-          nodeSockets.set(node.id, {
-            nodeId: node.id,
-            send(message) {
-              websocketSend(socket, message);
+      try {
+        const envelope = parseProtocolEnvelope(JSON.parse(String(data)));
+        switch (envelope.type) {
+          case "node.register": {
+            const payload = nodeRegistrationPayloadSchema.parse(
+              envelope.payload
+            ) as NodeRegistrationPayload;
+            if (registrationToken && payload.registrationToken !== registrationToken) {
+              websocketSend(socket, {
+                type: "node.registration.denied",
+                payload: {
+                  reason: "invalid_registration_token"
+                }
+              });
+              socket.close();
+              break;
             }
-          });
-          websocketSend(socket, {
-            type: "node.registered",
-            payload: {
+            const node = repository.registerNode({
+              id: envelope.source,
+              name: payload.nodeName,
+              host: payload.host,
+              labels: payload.labels
+            });
+            boundNodeId = node.id;
+            nodeSockets.set(node.id, {
               nodeId: node.id,
-              reconnectToken: repository.getReconnectToken(node.id)
-            }
-          });
-          void broadcastTopology();
-          break;
-        }
-        case "node.resume": {
-          const payload = envelope.payload as {
-            nodeId?: string;
-            reconnectToken?: string;
-          };
-          if (!payload.nodeId || !payload.reconnectToken) {
-            websocketSend(socket, {
-              type: "node.resume.denied",
-              payload: {
-                reason: "missing_credentials"
+              send(message) {
+                websocketSend(socket, message);
               }
             });
-            socket.close();
-            break;
-          }
-
-          const node = repository.resumeNode(
-            payload.nodeId,
-            payload.reconnectToken,
-            new Date().toISOString()
-          );
-          if (!node) {
             websocketSend(socket, {
-              type: "node.resume.denied",
+              type: "node.registered",
               payload: {
-                reason: "invalid_reconnect_token"
+                nodeId: node.id,
+                reconnectToken: repository.getReconnectToken(node.id)
               }
             });
-            socket.close();
+            void broadcastTopology();
             break;
           }
+          case "node.resume": {
+            const payload = envelope.payload as {
+              nodeId?: string;
+              reconnectToken?: string;
+            };
+            if (!payload.nodeId || !payload.reconnectToken) {
+              websocketSend(socket, {
+                type: "node.resume.denied",
+                payload: {
+                  reason: "missing_credentials"
+                }
+              });
+              socket.close();
+              break;
+            }
 
-          boundNodeId = node.id;
-          nodeSockets.set(node.id, {
-            nodeId: node.id,
-            send(message) {
-              websocketSend(socket, message);
-            }
-          });
-          websocketSend(socket, {
-            type: "node.resumed",
-            payload: {
-              nodeId: node.id
-            }
-          });
-          void broadcastTopology();
-          break;
-        }
-        case "node.heartbeat": {
-          const payload = nodeHeartbeatPayloadSchema.parse(
-            envelope.payload
-          ) as NodeHeartbeatPayload;
-          repository.heartbeat(payload.nodeId, payload.observedAt);
-          void broadcastTopology();
-          break;
-        }
-        case "node.capabilities.sync": {
-          const payload = capabilitySyncPayloadSchema.parse(
-            envelope.payload
-          ) as CapabilitySyncPayload;
-          repository.syncCapabilities(payload.nodeId, payload.capabilities);
-          void broadcastTopology();
-          break;
-        }
-        case "session.event": {
-          const payload = sessionEventSchema.parse(envelope.payload) as SessionEventRecord;
-          repository.appendSessionEvent({
-            sessionId: payload.sessionId,
-            eventType: payload.eventType,
-            sourceAgentId: payload.sourceAgentId,
-            targetAgentId: payload.targetAgentId,
-            payload: payload.payload
-          });
-          if (payload.eventType === "session.output.completed") {
-            repository.updateSessionStatus(payload.sessionId, "completed");
-          }
-          if (payload.eventType === "session.failed") {
-            repository.updateSessionStatus(payload.sessionId, "failed");
-          }
-          if (payload.eventType === "session.cancelled") {
-            repository.updateSessionStatus(payload.sessionId, "cancelled");
-          }
-          if (payload.eventType === "session.invocation.requested") {
-            routeInvocation(
-              invocationRequestPayloadSchema.parse(payload.payload),
-              payload
+            const node = repository.resumeNode(
+              payload.nodeId,
+              payload.reconnectToken,
+              new Date().toISOString()
             );
+            if (!node) {
+              websocketSend(socket, {
+                type: "node.resume.denied",
+                payload: {
+                  reason: "invalid_reconnect_token"
+                }
+              });
+              socket.close();
+              break;
+            }
+
+            boundNodeId = node.id;
+            nodeSockets.set(node.id, {
+              nodeId: node.id,
+              send(message) {
+                websocketSend(socket, message);
+              }
+            });
+            websocketSend(socket, {
+              type: "node.resumed",
+              payload: {
+                nodeId: node.id
+              }
+            });
+            void broadcastTopology();
+            break;
           }
-          maybePropagateChildCompletion(payload);
-          void broadcastSession(payload.sessionId);
-          break;
+          case "node.heartbeat": {
+            const payload = nodeHeartbeatPayloadSchema.parse(
+              envelope.payload
+            ) as NodeHeartbeatPayload;
+            repository.heartbeat(payload.nodeId, payload.observedAt);
+            void broadcastTopology();
+            break;
+          }
+          case "node.capabilities.sync": {
+            const payload = capabilitySyncPayloadSchema.parse(
+              envelope.payload
+            ) as CapabilitySyncPayload;
+            repository.syncCapabilities(payload.nodeId, payload.capabilities);
+            void broadcastTopology();
+            break;
+          }
+          case "session.event": {
+            const payload = sessionEventSchema.parse(envelope.payload) as SessionEventRecord;
+            repository.appendSessionEvent({
+              sessionId: payload.sessionId,
+              eventType: payload.eventType,
+              sourceAgentId: payload.sourceAgentId,
+              targetAgentId: payload.targetAgentId,
+              payload: payload.payload
+            });
+            if (payload.eventType === "session.output.completed") {
+              repository.updateSessionStatus(payload.sessionId, "completed");
+            }
+            if (payload.eventType === "session.failed") {
+              repository.updateSessionStatus(payload.sessionId, "failed");
+            }
+            if (payload.eventType === "session.cancelled") {
+              repository.updateSessionStatus(payload.sessionId, "cancelled");
+            }
+            if (payload.eventType === "session.invocation.requested") {
+              routeInvocation(
+                invocationRequestPayloadSchema.parse(payload.payload),
+                payload
+              );
+            }
+            maybePropagateChildCompletion(payload);
+            void broadcastSession(payload.sessionId);
+            break;
+          }
+          default:
+            break;
         }
-        default:
-          break;
+      } catch (error) {
+        app.log.error({ error }, "invalid websocket message");
+        websocketSend(socket, {
+          type: "node.message.rejected",
+          payload: {
+            reason: "invalid_message"
+          }
+        });
       }
     });
     socket.on("close", () => {

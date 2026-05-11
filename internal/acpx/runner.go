@@ -6,16 +6,19 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"strings"
 	"sync"
 )
 
 // RunRequest describes one acpx process invocation.
 type RunRequest struct {
-	Command   string
-	Args      []string
+	Command    string
+	Args       []string
+	Agent      string
+	Session    string
 	WorkingDir string
-	Env       []string
-	Stdin     string
+	Env        []string
+	Stdin      string
 }
 
 // Runner executes local acpx-backed agent requests.
@@ -32,9 +35,74 @@ func (Runner) Run(
 		command = "acpx"
 	}
 
-	cmd := exec.CommandContext(ctx, command, request.Args...)
-	cmd.Dir = request.WorkingDir
-	cmd.Env = append(cmd.Environ(), request.Env...)
+	if strings.TrimSpace(request.Agent) != "" {
+		if err := runCommand(ctx, command, buildEnsureArgs(request), request.WorkingDir, request.Env, ""); err != nil {
+			return nil, fmt.Errorf("ensure acpx session: %w", err)
+		}
+		return runStreamingCommand(ctx, command, buildPromptArgs(request), request.WorkingDir, request.Env, request.Stdin, onChunk)
+	}
+
+	return runStreamingCommand(ctx, command, request.Args, request.WorkingDir, request.Env, request.Stdin, onChunk)
+}
+
+func buildEnsureArgs(request RunRequest) []string {
+	args := append([]string{}, request.Args...)
+	if request.WorkingDir != "" {
+		args = append(args, "--cwd", request.WorkingDir)
+	}
+	args = append(args, request.Agent, "sessions", "ensure")
+	if request.Session != "" {
+		args = append(args, "--name", request.Session)
+	}
+	return args
+}
+
+func buildPromptArgs(request RunRequest) []string {
+	args := append([]string{}, request.Args...)
+	args = append(args, "--format", "quiet")
+	if request.WorkingDir != "" {
+		args = append(args, "--cwd", request.WorkingDir)
+	}
+	args = append(args, request.Agent)
+	if request.Session != "" {
+		args = append(args, "--session", request.Session)
+	}
+	return args
+}
+
+func runCommand(
+	ctx context.Context,
+	command string,
+	args []string,
+	workingDir string,
+	env []string,
+	stdinText string,
+) error {
+	cmd := exec.CommandContext(ctx, command, args...)
+	cmd.Dir = workingDir
+	cmd.Env = append(cmd.Environ(), env...)
+	if stdinText != "" {
+		cmd.Stdin = strings.NewReader(stdinText)
+	}
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func runStreamingCommand(
+	ctx context.Context,
+	command string,
+	args []string,
+	workingDir string,
+	env []string,
+	stdinText string,
+	onChunk func(text string),
+) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, command, args...)
+	cmd.Dir = workingDir
+	cmd.Env = append(cmd.Environ(), env...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, fmt.Errorf("open stdout pipe: %w", err)
@@ -44,14 +112,14 @@ func (Runner) Run(
 		return nil, fmt.Errorf("open stderr pipe: %w", err)
 	}
 
-	if request.Stdin != "" {
+	if stdinText != "" {
 		stdin, err := cmd.StdinPipe()
 		if err != nil {
 			return nil, fmt.Errorf("open stdin pipe: %w", err)
 		}
 		go func() {
 			defer stdin.Close()
-			_, _ = io.WriteString(stdin, request.Stdin)
+			_, _ = io.WriteString(stdin, stdinText)
 		}()
 	}
 

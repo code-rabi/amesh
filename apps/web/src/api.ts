@@ -2,10 +2,17 @@ import type { BrowserRealtimeEvent, TopologySnapshot, TriggerRule } from "@amesh
 
 import type { SessionSummary, SessionView } from "./types.js";
 
-const baseUrl = import.meta.env.VITE_SERVER_URL ?? "http://localhost:3001";
+const baseUrl = import.meta.env.VITE_SERVER_URL ?? "";
+
+function serverUrl() {
+  if (baseUrl) {
+    return new URL(baseUrl);
+  }
+  return new URL(window.location.origin);
+}
 
 export async function fetchTopology(): Promise<TopologySnapshot> {
-  const response = await fetch(`${baseUrl}/api/topology`);
+  const response = await fetch(`${serverUrl().origin}/api/topology`);
   return response.json();
 }
 
@@ -14,7 +21,7 @@ export async function createTriggerRule(input: {
   targetAgentId: string;
   mode: "allow" | "deny";
 }): Promise<TriggerRule> {
-  const response = await fetch(`${baseUrl}/api/trigger-rules`, {
+  const response = await fetch(`${serverUrl().origin}/api/trigger-rules`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input)
@@ -23,13 +30,13 @@ export async function createTriggerRule(input: {
 }
 
 export async function deleteTriggerRule(id: string): Promise<void> {
-  await fetch(`${baseUrl}/api/trigger-rules/${id}`, {
+  await fetch(`${serverUrl().origin}/api/trigger-rules/${id}`, {
     method: "DELETE"
   });
 }
 
 export async function createSession(input: { agentId: string; prompt: string }): Promise<SessionView> {
-  const response = await fetch(`${baseUrl}/api/sessions`, {
+  const response = await fetch(`${serverUrl().origin}/api/sessions`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input)
@@ -38,17 +45,17 @@ export async function createSession(input: { agentId: string; prompt: string }):
 }
 
 export async function fetchSessions(): Promise<SessionSummary[]> {
-  const response = await fetch(`${baseUrl}/api/sessions`);
+  const response = await fetch(`${serverUrl().origin}/api/sessions`);
   return response.json();
 }
 
 export async function fetchSession(sessionId: string): Promise<SessionView> {
-  const response = await fetch(`${baseUrl}/api/sessions/${sessionId}`);
+  const response = await fetch(`${serverUrl().origin}/api/sessions/${sessionId}`);
   return response.json();
 }
 
 export async function appendSessionInput(sessionId: string, prompt: string): Promise<SessionView> {
-  const response = await fetch(`${baseUrl}/api/sessions/${sessionId}/input`, {
+  const response = await fetch(`${serverUrl().origin}/api/sessions/${sessionId}/input`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ prompt })
@@ -57,7 +64,7 @@ export async function appendSessionInput(sessionId: string, prompt: string): Pro
 }
 
 export function connectRealtime(onEvent: (event: BrowserRealtimeEvent) => void) {
-  const target = new URL(baseUrl);
+  const target = serverUrl();
   target.protocol = target.protocol === "https:" ? "wss:" : "ws:";
   target.pathname = "/ws";
   target.searchParams.set("role", "browser");

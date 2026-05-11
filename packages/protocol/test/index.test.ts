@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  capabilitySchema,
   browserRealtimeEventSchema,
   parseProtocolEnvelope,
   protocolEnvelopeSchema,
@@ -46,5 +47,16 @@ describe("protocol schema", () => {
     });
 
     expect(event.type).toBe("topology.snapshot");
+  });
+
+  it("defaults omitted capability args to an empty array", () => {
+    const capability = capabilitySchema.parse({
+      id: "agent_1",
+      name: "Claude",
+      acpxAgent: "claude",
+      command: "acpx"
+    });
+
+    expect(capability.args).toEqual([]);
   });
 });

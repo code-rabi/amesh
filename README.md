@@ -22,6 +22,16 @@ Initial product and architecture details live in [docs/design/mvp-design.md](/ho
 - The control plane and dashboard are designed to ship as one deployable.
 - The root [Dockerfile](/home/nitayr/projects/amesh/Dockerfile) builds the web assets and serves them from the Fastify server process.
 - The remote node remains a separate daemon installed on target machines.
+- The node installer manages an internal ACPX sidecar so remote hosts do not need a separate global `acpx` install.
+
+Install the remote node with one command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/NitayRabi/amesh/main/install-amesh-node.sh \
+  | SERVER_URL='ws://your-server:3001/ws?role=node' \
+    REGISTRATION_TOKEN='demo-token' \
+    bash
+```
 
 ## Local commands
 

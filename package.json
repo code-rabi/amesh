@@ -6,6 +6,8 @@
   "scripts": {
     "build": "pnpm -r build",
     "check": "pnpm lint && pnpm test && pnpm typecheck",
+    "dev:daemon": "bash scripts/dev-daemon.sh",
+    "dev:dameon": "pnpm dev:daemon",
     "dev": "pnpm --parallel --filter @amesh/server --filter @amesh/web dev",
     "lint": "pnpm -r lint",
     "test": "pnpm -r test",

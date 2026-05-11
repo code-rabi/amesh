@@ -5,24 +5,18 @@
       "id": "agent-claude",
       "name": "Claude",
       "acpxAgent": "claude",
-      "command": "acpx",
-      "args": ["run"],
       "labels": ["demo"]
     },
     {
       "id": "agent-codex",
       "name": "Codex",
       "acpxAgent": "codex",
-      "command": "acpx",
-      "args": ["run"],
       "labels": ["demo"]
     },
     {
       "id": "agent-openclaw",
       "name": "OpenClaw",
       "acpxAgent": "openclaw",
-      "command": "acpx",
-      "args": ["run"],
       "labels": ["demo"]
     }
   ]

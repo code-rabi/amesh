@@ -3,4 +3,6 @@ dist
 .turbo
 .DS_Store
 apps/server/data
+apps/server/apps
 apps/server/.env
+.amesh-node-state.json
