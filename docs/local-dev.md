@@ -33,11 +33,11 @@ sh -n scripts/install-amesh-node.sh
 - Browser access now uses an admin password plus an HTTP-only session cookie. Set `AUTH_ADMIN_PASSWORD` for a stable local password; if it is missing, the server generates a one-process UUID password and writes it to the server log at startup.
 - Set `AUTH_SESSION_SECRET` if you want browser sessions to survive a server restart. If it is missing, the server generates a random in-memory secret and all cookies are invalidated on restart.
 - The server enforces `AMESH_REGISTRATION_TOKEN` when set. In local development, leaving it unset keeps registration open; in deployed environments it should be set explicitly.
-- The Go daemon expects an `agents.json` capabilities file for local agent definitions.
-- A starter node config lives at `examples/agents.json` and uses real ACPX targets: `claude`, `codex`, and `openclaw`.
-- `corepack pnpm dev:daemon` installs a managed ACPX sidecar under `~/.local/share/amesh/acpx` if needed, registers `node-a` on first run, saves `.amesh-node-state.json`, and then starts the long-lived daemon process against `examples/agents.json`.
+- The Go daemon expects an `agents.json`-shaped capabilities file for local agent definitions, but `amesh-node detect --config <path>` can generate that file from live ACPX probing.
+- `corepack pnpm dev:daemon` installs a managed ACPX sidecar under `~/.local/share/amesh/acpx` if needed, writes `.amesh-agents.json` by detection on first run, saves `.amesh-node-state.json`, and then starts the long-lived daemon process against that generated config.
 - The daemon now keeps running when the control plane goes away. It retries websocket connect, `node.resume`, and capability sync with backoff until the server returns.
 - Agent topology status is derived from daemon-side ACPX health probes, not just from the node websocket being connected. Unhealthy local agents are omitted from capability sync and appear offline in the control plane.
+- The dashboard can send a `Detect agents` action to an online node. The daemon rewrites its config from live detection and immediately re-syncs capabilities back to the control plane.
 - The server smoke script authenticates through `/api/auth/login` before it exercises operator APIs, so local smoke usage matches production browser auth instead of relying on anonymous access.
 - `corepack pnpm check:knip` runs unused dependency and export checks against the TypeScript workspaces only; it intentionally ignores repo-local agent skill folders and the Go tree.
 - `corepack pnpm check:sentrux` installs a pinned user-space `sentrux` binary under `.tools/` on first run and enforces the repo rules from `.sentrux/rules.toml`.
@@ -81,18 +81,20 @@ corepack pnpm dev:daemon
 3. If you want the manual flow instead, use quoted websocket URLs so zsh does not glob on `?`:
 
 ```bash
+go run ./cmd/amesh-node detect --config .amesh-agents.json
+
 go run ./cmd/amesh-node register \
   --server 'ws://localhost:3001/ws?role=node' \
   --token demo-token \
   --node-id node-a \
-  --config examples/agents.json \
+  --config .amesh-agents.json \
   --state .amesh-node-state.json
 
 go run ./cmd/amesh-node run \
   --state .amesh-node-state.json
 ```
 
-4. Open the dashboard, confirm that `Claude`, `Codex`, and `OpenClaw` appear, create an allow rule, and start a chat session.
+4. Open the dashboard, use `Detect agents` if you want to force a refresh on the running node, then create an allow rule and start a chat session against any detected online agent.
 
 ## Remote install
 

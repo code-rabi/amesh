@@ -127,35 +127,6 @@ mkdir -p "$(dirname "$STATE_PATH")"
 mkdir -p "$(dirname "$SERVICE_PATH")"
 mkdir -p "$(dirname "$CONFIG_PATH")"
 
-if [[ ! -f "$CONFIG_PATH" ]]; then
-  cat >"$CONFIG_PATH" <<'EOF'
-{
-  "nodeName": "demo-node",
-  "agents": [
-    {
-      "id": "agent-claude",
-      "name": "Claude",
-      "acpxAgent": "claude",
-      "labels": ["demo"]
-    },
-    {
-      "id": "agent-codex",
-      "name": "Codex",
-      "acpxAgent": "codex",
-      "labels": ["demo"]
-    },
-    {
-      "id": "agent-openclaw",
-      "name": "OpenClaw",
-      "acpxAgent": "openclaw",
-      "labels": ["demo"]
-    }
-  ]
-}
-EOF
-  log "wrote starter config to ${CONFIG_PATH}"
-fi
-
 log "installing amesh-node from ${tag}"
 log "downloading ${download_url}"
 curl -fsSL "${download_url}" -o "${tmp_dir}/${asset}"
@@ -175,6 +146,10 @@ install -m 0755 "${extract_dir}/${binary_name}" "${binary_path}"
 if [[ ! -x "$ACPX_BIN" ]]; then
   log "installing managed acpx sidecar into ${ACPX_PREFIX}"
   npm install --global --prefix "$ACPX_PREFIX" "$ACPX_NPM_SPEC"
+fi
+
+if [[ ! -f "$CONFIG_PATH" ]]; then
+  env AMESH_ACPX_PATH="$ACPX_BIN" "$binary_path" detect --config "$CONFIG_PATH"
 fi
 
 if [[ ! -f "$STATE_PATH" ]]; then

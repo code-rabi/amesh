@@ -12,6 +12,12 @@
 - Consequence: dead dependencies, stale exports, and structural erosion could accumulate without showing up as independent PR checks.
 - Mitigation: `knip` now runs as a dedicated unused-code gate, and `sentrux` runs as a separate architecture check backed by `.sentrux/rules.toml`.
 
+## 2026-05-11: Demo agent bootstrap masked real node inventory
+
+- The daemon and installer defaulted to a demo config with `claude`, `codex`, and `openclaw`, even on machines where those local ACPX targets were not actually available.
+- Consequence: fresh nodes looked broken or permanently offline because the first advertised inventory was a placeholder and health probing immediately knocked those fake agents out.
+- Mitigation: the daemon now has a first-class `detect` command, uses detection as the default config bootstrap path, and the dashboard can trigger detection on an online node to refresh inventory in place.
+
 ## 2026-05-11: Missing Go toolchain in local automation
 
 - The workspace initially lacked a preinstalled Go toolchain, which blocked daemon compile and runtime verification.

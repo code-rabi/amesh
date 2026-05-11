@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 )
@@ -58,6 +59,21 @@ func Load(path string) (File, error) {
 	}
 
 	return file, nil
+}
+
+// Save writes the node daemon capability file to disk.
+func Save(path string, file File) error {
+	bytes, err := json.MarshalIndent(file, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode config %s: %w", path, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("mkdir config dir for %s: %w", path, err)
+	}
+	if err := os.WriteFile(path, bytes, 0o644); err != nil {
+		return fmt.Errorf("write config %s: %w", path, err)
+	}
+	return nil
 }
 
 func defaultACPXCommand() string {

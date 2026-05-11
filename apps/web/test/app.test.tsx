@@ -14,6 +14,7 @@ class MockSocket {
 const socket = new MockSocket();
 let authenticated = true;
 let updateRequests = 0;
+let detectRequests = 0;
 let narrowLayout = false;
 let updateRequired = true;
 let topologyNodes = [
@@ -60,6 +61,10 @@ beforeEach(() => {
         updateRequests += 1;
         return response({ ok: true });
       }
+      if (url.endsWith("/api/nodes/node-1/detect")) {
+        detectRequests += 1;
+        return response({ ok: true });
+      }
       if (url.endsWith("/api/sessions")) {
         return response([]);
       }
@@ -84,6 +89,7 @@ beforeEach(() => {
   );
   authenticated = true;
   updateRequests = 0;
+  detectRequests = 0;
   narrowLayout = false;
   updateRequired = true;
   topologyNodes = [
@@ -199,6 +205,22 @@ describe("App shell", () => {
     await waitFor(() => expect(updateRequests).toBe(1));
     await waitFor(() =>
       expect(screen.getByText(/update requested\. the node should reconnect after restart\./i)).toBeTruthy()
+    );
+  });
+
+  it("triggers agent detection from the admin UI", async () => {
+    narrowLayout = true;
+    window.history.pushState({}, "", "/");
+    render(<App />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /detect agents on lab-01/i })).toBeTruthy()
+    );
+    fireEvent.click(screen.getByRole("button", { name: /detect agents on lab-01/i }));
+
+    await waitFor(() => expect(detectRequests).toBe(1));
+    await waitFor(() =>
+      expect(screen.getByText(/detection requested\. the node will refresh its agent inventory\./i)).toBeTruthy()
     );
   });
 

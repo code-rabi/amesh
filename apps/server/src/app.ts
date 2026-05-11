@@ -546,6 +546,34 @@ export function buildApp(options: AppOptions = {}) {
     });
     return { ok: true };
   });
+  app.post("/api/nodes/:nodeId/detect", { preHandler: requireBrowserAuth }, async (request, reply) => {
+    const params = request.params as { nodeId: string };
+    const node = repository.findNode(params.nodeId);
+    if (!node) {
+      reply.code(404);
+      return { message: "node not found" };
+    }
+    if (node.status !== "online") {
+      reply.code(409);
+      return { message: "node must be online to detect agents" };
+    }
+    if (!nodeSockets.has(node.id)) {
+      reply.code(409);
+      return { message: "node socket is not connected" };
+    }
+
+    sendToNode(node.id, {
+      type: "node.detect",
+      requestId: nanoid(10),
+      sessionId: null,
+      source: "server",
+      target: node.id,
+      payload: {
+        nodeId: node.id
+      }
+    });
+    return { ok: true };
+  });
   app.get("/api/sessions", { preHandler: requireBrowserAuth }, async () => repository.listSessions());
   app.get("/api/sessions/:sessionId", { preHandler: requireBrowserAuth }, async (request, reply) => {
     const state = repository.getSession((request.params as { sessionId: string }).sessionId);

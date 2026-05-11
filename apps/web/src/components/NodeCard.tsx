@@ -3,6 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 
 import type { AgentRecord, AgentStatus, NodeRecord, NodeStatus } from "@amesh/protocol";
 import { relativeTime } from "../lib/time.js";
+import { NodeDetectButton } from "./NodeDetectButton.js";
 import { NodeUpdateButton } from "./NodeUpdateButton.js";
 
 export type NodeCardData = {
@@ -50,6 +51,9 @@ export function NodeCard({ data }: NodeCardProps) {
         </div>
         <div className="node-card__meta">
           <span className={nodePill(node.status)}>{nodePillLabel(node.status)}</span>
+          <div onPointerDown={(event) => event.stopPropagation()}>
+            <NodeDetectButton node={node} compact />
+          </div>
           <div onPointerDown={(event) => event.stopPropagation()}>
             <NodeUpdateButton node={node} compact />
           </div>
