@@ -1,12 +1,6 @@
 node_modules
 dist
-build
-.DS_Store
-.env
-.env.*
-coverage
-*.log
-tmp
 .turbo
-.idea
-.vscode
+.DS_Store
+apps/server/data
+apps/server/.env

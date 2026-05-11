@@ -1,0 +1,31 @@
+{
+  "name": "@amesh/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/index.ts",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "smoke": "tsx scripts/smoke.ts",
+    "start": "tsx src/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@amesh/protocol": "workspace:*",
+    "@fastify/websocket": "^11.2.0",
+    "better-sqlite3": "^12.2.0",
+    "drizzle-orm": "^0.44.5",
+    "fastify": "^5.6.0",
+    "nanoid": "^5.1.6"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4",
+    "ws": "^8.18.3"
+  }
+}

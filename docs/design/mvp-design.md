@@ -119,10 +119,13 @@ Why this stack:
 - `id`
 - `node_id`
 - `name`
-- `provider` (`claude`, `codex`, `openclaw`, `hermes`, `custom`)
 - `backend` (`acpx`)
 - `status` (`online`, `offline`, `error`)
 - `capabilities` (JSON)
+
+Provider-specific selection should remain local to the node daemon and its `acpx`
+configuration. The control plane only needs to reason about opaque agent IDs,
+names, backend status, and capability metadata.
 
 ### Trigger Rule
 

@@ -9,6 +9,10 @@ Current docs to maintain:
 - `docs/local-dev.md`
 - `docs/past-failures.md`
 
+Decision docs:
+
+- [deployment shape](docs/deployment.md)
+
 Working rules:
 
 - No hand waving.

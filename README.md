@@ -9,3 +9,24 @@ The MVP focuses on three things:
 3. Let users chat with any agent in a web UI and define which agents may trigger other agents across nodes.
 
 Initial product and architecture details live in [docs/design/mvp-design.md](/home/nitayr/projects/amesh/docs/design/mvp-design.md).
+
+## Workspace
+
+- `apps/server`: Fastify control plane, SQLite persistence, HTTP APIs, and websocket routing
+- `apps/web`: Vite + React operator dashboard for topology, trigger rules, and chat
+- `packages/protocol`: shared runtime schemas and envelope contracts
+- `cmd/amesh-node` and `internal/*`: Go node daemon scaffold for register or run flows and local `acpx` execution against example `claude`, `codex`, and `openclaw` targets
+
+## Deployment
+
+- The control plane and dashboard are designed to ship as one deployable.
+- The root [Dockerfile](/home/nitayr/projects/amesh/Dockerfile) builds the web assets and serves them from the Fastify server process.
+- The remote node remains a separate daemon installed on target machines.
+
+## Local commands
+
+```bash
+corepack pnpm install
+corepack pnpm typecheck
+corepack pnpm test
+```
