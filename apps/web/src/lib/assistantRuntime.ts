@@ -3,7 +3,7 @@ import {
   type ExternalStoreAdapter,
   type ThreadMessageLike
 } from "@assistant-ui/react";
-import { useMemo, useRef } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 import type { AgentRecord } from "@amesh/protocol";
 import type { SessionView } from "../types.js";
@@ -314,6 +314,7 @@ export function useAmeshThreadRuntime(activeAgent: AgentRecord | null) {
   const sessions = useSessions();
   const sessionView = sessions.selected;
   const messagesRef = useRef<ThreadMessageLike[]>([]);
+  const [sendError, setSendError] = useState<string | null>(null);
 
   const messages = useMemo<ThreadMessageLike[]>(() => {
     const next = sessionView ? buildMessages(sessionView) : [];
@@ -325,6 +326,8 @@ export function useAmeshThreadRuntime(activeAgent: AgentRecord | null) {
     sessionView?.session.status === "pending" ||
     sessionView?.session.status === "running";
 
+  const clearSendError = useCallback(() => setSendError(null), []);
+
   const adapter: ExternalStoreAdapter<ThreadMessageLike> = {
     messages,
     isRunning,
@@ -335,13 +338,27 @@ export function useAmeshThreadRuntime(activeAgent: AgentRecord | null) {
         .join("")
         .trim();
       if (!text) return;
-      if (sessionView) {
-        await sessions.appendPrompt(sessionView.session.id, text);
-      } else if (activeAgent) {
-        await sessions.startSession(activeAgent.id, text);
+      try {
+        setSendError(null);
+        if (sessionView) {
+          await sessions.appendPrompt(sessionView.session.id, text);
+        } else if (activeAgent) {
+          await sessions.startSession(activeAgent.id, text);
+        } else {
+          throw new Error("Pick an agent before sending.");
+        }
+      } catch (cause) {
+        const message =
+          cause instanceof Error
+            ? cause.message
+            : "Failed to reach the control plane.";
+        setSendError(message);
+        throw cause;
       }
     }
   };
 
-  return useExternalStoreRuntime(adapter);
+  const runtime = useExternalStoreRuntime(adapter);
+
+  return { runtime, sendError, clearSendError };
 }

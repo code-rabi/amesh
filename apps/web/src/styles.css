@@ -1318,6 +1318,72 @@ button:focus { outline: none; }
   text-transform: none;
   letter-spacing: 0;
 }
+
+/* Per-message agent error block */
+.msg-error {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: var(--s-2);
+  align-items: start;
+  padding: var(--s-2) var(--s-3);
+  background: var(--c-error-soft);
+  border: 1px solid color-mix(in oklab, var(--c-error) 30%, var(--c-line) 70%);
+  border-radius: var(--r-md);
+  color: var(--c-ink);
+}
+.msg-error__icon {
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--c-error);
+  color: oklch(98% 0.01 60);
+  font: 600 0.75rem/1 var(--font-mono);
+}
+.msg-error__title {
+  font: var(--t-title);
+  color: var(--c-error);
+  font-weight: 600;
+}
+.msg-error__detail {
+  font: var(--t-mono);
+  font-size: 0.75rem;
+  color: var(--c-ink);
+  margin-top: 2px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Composer-level send error (above the composer) */
+.send-error {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: var(--s-3);
+  padding: 8px var(--s-5);
+  background: var(--c-error-soft);
+  border-top: 1px solid color-mix(in oklab, var(--c-error) 35%, var(--c-line) 65%);
+  font: var(--t-body);
+  color: var(--c-ink);
+}
+.send-error__label {
+  font: var(--t-label);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--c-error);
+  font-weight: 600;
+}
+.send-error__detail { color: var(--c-ink); }
+.send-error__dismiss {
+  background: transparent;
+  border: 0;
+  color: var(--c-mute);
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 4px 8px;
+  border-radius: var(--r-xs);
+  cursor: pointer;
+}
+.send-error__dismiss:hover { color: var(--c-ink); background: var(--c-surface); }
 .chat__title {
   display: flex;
   gap: var(--s-3);

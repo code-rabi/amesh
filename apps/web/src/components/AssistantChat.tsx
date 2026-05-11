@@ -2,7 +2,8 @@ import {
   AssistantRuntimeProvider,
   ComposerPrimitive,
   MessagePrimitive,
-  ThreadPrimitive
+  ThreadPrimitive,
+  useMessage
 } from "@assistant-ui/react";
 import { MarkdownTextPrimitive } from "@assistant-ui/react-markdown";
 import { createContext, useContext, useState, type ReactNode } from "react";
@@ -22,7 +23,7 @@ type Props = {
 const ShowAcpContext = createContext(false);
 
 export function AssistantChat({ session, activeAgent, topology }: Props) {
-  const runtime = useAmeshThreadRuntime(activeAgent);
+  const { runtime, sendError, clearSendError } = useAmeshThreadRuntime(activeAgent);
   const [showAcp, setShowAcp] = useState(false);
 
   return (
@@ -56,11 +57,26 @@ export function AssistantChat({ session, activeAgent, topology }: Props) {
               />
             </ThreadPrimitive.Viewport>
 
+            {sendError ? (
+              <SendError message={sendError} onDismiss={clearSendError} />
+            ) : null}
             <ChatComposer disabled={!activeAgent} />
           </ThreadPrimitive.Root>
         </div>
       </ShowAcpContext.Provider>
     </AssistantRuntimeProvider>
+  );
+}
+
+function SendError({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+  return (
+    <div className="send-error" role="alert">
+      <span className="send-error__label">Send failed</span>
+      <span className="send-error__detail">{message}</span>
+      <button type="button" className="send-error__dismiss" onClick={onDismiss} aria-label="Dismiss">
+        ×
+      </button>
+    </div>
   );
 }
 
@@ -221,11 +237,39 @@ function makeAssistantMessage(activeAgent: AgentRecord | null, topology: Topolog
                 data: { by_name: dataByName }
               }}
             />
+            <MessagePrimitive.Error>
+              <AssistantError />
+            </MessagePrimitive.Error>
           </div>
         </article>
       </MessagePrimitive.Root>
     );
   };
+}
+
+function AssistantError() {
+  // MessagePrimitive.Error only renders this when status.error is defined.
+  const message = useMessage();
+  const status = message.status;
+  const error =
+    status && status.type === "incomplete" ? status.error : undefined;
+  const text =
+    typeof error === "string"
+      ? error
+      : error === null || error === undefined
+        ? "The agent stopped without finishing."
+        : JSON.stringify(error);
+  return (
+    <aside className="msg-error" role="status">
+      <span className="msg-error__icon" aria-hidden>
+        !
+      </span>
+      <div>
+        <div className="msg-error__title">Agent error</div>
+        <div className="msg-error__detail">{text}</div>
+      </div>
+    </aside>
+  );
 }
 
 function AcpUpdateCard({ payload }: { payload: Record<string, unknown> }) {
