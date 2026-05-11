@@ -64,6 +64,20 @@ type NodeSocket = {
   send: (message: ProtocolEnvelope) => void;
 };
 
+type AppRouteDeps = {
+  app: ReturnType<typeof Fastify>;
+  authConfig: ReturnType<typeof resolveAuthConfig>;
+  registrationToken: string;
+  repository: Repository;
+  nodeSockets: Map<string, NodeSocket>;
+  isAuthenticated: (cookieValue: string | undefined) => boolean;
+  requireBrowserAuth: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
+  topologySnapshot: () => Promise<TopologySnapshot>;
+  broadcastTopology: () => Promise<void>;
+  broadcastSession: (sessionId: string) => Promise<void>;
+  sendToNode: (nodeId: string, envelope: ProtocolEnvelope) => void;
+};
+
 function websocketSend(socket: WebSocket, payload: unknown) {
   socket.send(JSON.stringify(payload));
 }
@@ -480,241 +494,18 @@ export function buildApp(options: AppOptions = {}) {
     return { message: "upgrade required" };
   });
 
-  app.get("/api/auth/session", async (request) => ({
-    authenticated: isAuthenticated(request.cookies[authConfig.cookieName]),
-    username: authConfig.username
-  }));
-
-  app.post("/api/auth/login", async (request, reply) => {
-    const body = request.body as { password?: unknown } | undefined;
-    const password = typeof body?.password === "string" ? body.password : "";
-    if (!constantTimeStringEqual(password, authConfig.password)) {
-      reply.code(401).send({ message: "invalid password" });
-      return;
-    }
-
-    reply.setCookie(authConfig.cookieName, issueSession(authConfig, authConfig.username), {
-      httpOnly: true,
-      sameSite: "lax",
-      path: "/",
-      maxAge: Math.floor(authConfig.sessionTtlMs / 1000)
-    });
-    return { authenticated: true, username: authConfig.username };
-  });
-
-  app.post("/api/auth/logout", async (_request, reply) => {
-    reply.clearCookie(authConfig.cookieName, { path: "/" });
-    return { authenticated: false };
-  });
-
-  app.get("/api/nodes", { preHandler: requireBrowserAuth }, async () => (await topologySnapshot()).nodes);
-  app.get("/api/agents", { preHandler: requireBrowserAuth }, async () => repository.listTopology().agents);
-  app.get("/api/bootstrap", { preHandler: requireBrowserAuth }, async () => ({
-    registrationToken
-  }));
-  app.get("/api/trigger-rules", { preHandler: requireBrowserAuth }, async () =>
-    repository.listTopology().triggerRules
-  );
-  app.get("/api/topology", { preHandler: requireBrowserAuth }, async () =>
-    topologySnapshot()
-  );
-  app.post("/api/nodes/:nodeId/update", { preHandler: requireBrowserAuth }, async (request, reply) => {
-    const params = request.params as { nodeId: string };
-    const node = repository.findNode(params.nodeId);
-    if (!node) {
-      reply.code(404);
-      return { message: "node not found" };
-    }
-    if (node.status !== "online") {
-      reply.code(409);
-      return { message: "node must be online to update" };
-    }
-    if (!nodeSockets.has(node.id)) {
-      reply.code(409);
-      return { message: "node socket is not connected" };
-    }
-
-    sendToNode(node.id, {
-      type: "node.update",
-      requestId: nanoid(10),
-      sessionId: null,
-      source: "server",
-      target: node.id,
-      payload: {
-        nodeId: node.id
-      }
-    });
-    return { ok: true };
-  });
-  app.post("/api/nodes/:nodeId/detect", { preHandler: requireBrowserAuth }, async (request, reply) => {
-    const params = request.params as { nodeId: string };
-    const node = repository.findNode(params.nodeId);
-    if (!node) {
-      reply.code(404);
-      return { message: "node not found" };
-    }
-    if (node.status !== "online") {
-      reply.code(409);
-      return { message: "node must be online to detect agents" };
-    }
-    if (!nodeSockets.has(node.id)) {
-      reply.code(409);
-      return { message: "node socket is not connected" };
-    }
-
-    sendToNode(node.id, {
-      type: "node.detect",
-      requestId: nanoid(10),
-      sessionId: null,
-      source: "server",
-      target: node.id,
-      payload: {
-        nodeId: node.id
-      }
-    });
-    return { ok: true };
-  });
-  app.get("/api/sessions", { preHandler: requireBrowserAuth }, async () => repository.listSessions());
-  app.get("/api/sessions/:sessionId", { preHandler: requireBrowserAuth }, async (request, reply) => {
-    const state = repository.getSession((request.params as { sessionId: string }).sessionId);
-    if (!state) {
-      reply.code(404);
-      return { message: "session not found" };
-    }
-    return state;
-  });
-
-  app.post("/api/trigger-rules", { preHandler: requireBrowserAuth }, async (request) => {
-    const body = upsertTriggerRuleRequestSchema.parse(request.body) as UpsertTriggerRuleRequest;
-    const rule = repository.upsertTriggerRule(body);
-    await broadcastTopology();
-    return rule;
-  });
-  app.delete("/api/trigger-rules/:id", { preHandler: requireBrowserAuth }, async (request, reply) => {
-    const params = request.params as { id: string };
-    const deleted = repository.deleteTriggerRule(params.id);
-    if (!deleted) {
-      reply.code(404);
-      return { message: "trigger rule not found" };
-    }
-    await broadcastTopology();
-    return { ok: true };
-  });
-
-  app.post("/api/sessions", { preHandler: requireBrowserAuth }, async (request, reply) => {
-    const body = createSessionRequestSchema.parse(request.body) as CreateSessionRequest;
-    const agent = repository.findAgent(body.agentId);
-    if (!agent) {
-      reply.code(404);
-      return { message: "agent not found" };
-    }
-    const session = repository.createSession(body.agentId, "user");
-    repository.updateSessionStatus(session.id, "running");
-    repository.appendSessionEvent({
-      sessionId: session.id,
-      eventType: "session.created",
-      sourceAgentId: null,
-      targetAgentId: body.agentId,
-      payload: {
-        prompt: body.prompt
-      }
-    });
-    sendToNode(agent.nodeId, {
-      type: "session.start",
-      requestId: nanoid(10),
-      sessionId: session.id,
-      source: "server",
-      target: agent.nodeId,
-      payload: sessionStartPayloadSchema.parse({
-        sessionId: session.id,
-        agentId: body.agentId,
-        prompt: body.prompt,
-        initiator: "user"
-      })
-    });
-    await broadcastSession(session.id);
-    return repository.getSession(session.id);
-  });
-
-  app.post("/api/sessions/:sessionId/input", { preHandler: requireBrowserAuth }, async (request, reply) => {
-    const params = request.params as { sessionId: string };
-    const body = appendSessionInputRequestSchema.parse(request.body);
-    const state = repository.getSession(params.sessionId);
-    if (!state) {
-      reply.code(404);
-      return { message: "session not found" };
-    }
-    const agent = repository.findAgent(state.session.entryAgentId);
-    if (!agent) {
-      reply.code(404);
-      return { message: "entry agent missing" };
-    }
-
-    repository.appendSessionEvent({
-      sessionId: state.session.id,
-      eventType: "session.prompted",
-      sourceAgentId: null,
-      targetAgentId: agent.id,
-      payload: {
-        prompt: body.prompt
-      }
-    });
-
-    sendToNode(agent.nodeId, {
-      type: "session.input",
-      requestId: nanoid(10),
-      sessionId: state.session.id,
-      source: "server",
-      target: agent.nodeId,
-      payload: sessionInputPayloadSchema.parse({
-        sessionId: state.session.id,
-        agentId: agent.id,
-        prompt: body.prompt
-      })
-    });
-    await broadcastSession(state.session.id);
-    return repository.getSession(state.session.id);
-  });
-
-  app.post("/api/sessions/:sessionId/cancel", { preHandler: requireBrowserAuth }, async (request, reply) => {
-    const params = request.params as { sessionId: string };
-    const state = repository.getSession(params.sessionId);
-    if (!state) {
-      reply.code(404);
-      return { message: "session not found" };
-    }
-    const agent = repository.findAgent(state.session.entryAgentId);
-    if (!agent) {
-      reply.code(404);
-      return { message: "entry agent missing" };
-    }
-
-    repository.updateSessionStatus(state.session.id, "cancelled");
-    repository.appendSessionEvent({
-      sessionId: state.session.id,
-      eventType: "session.cancelled",
-      sourceAgentId: null,
-      targetAgentId: agent.id,
-      payload: {
-        reason: "user_cancelled"
-      }
-    });
-
-    sendToNode(agent.nodeId, {
-      type: "session.cancel",
-      requestId: nanoid(10),
-      sessionId: state.session.id,
-      source: "server",
-      target: agent.nodeId,
-      payload: {
-        sessionId: state.session.id,
-        agentId: agent.id,
-        reason: "user_cancelled"
-      }
-    });
-
-    await broadcastSession(state.session.id);
-    return repository.getSession(state.session.id);
+  registerApiRoutes({
+    app,
+    authConfig,
+    registrationToken,
+    repository,
+    nodeSockets,
+    isAuthenticated,
+    requireBrowserAuth,
+    topologySnapshot,
+    broadcastTopology,
+    broadcastSession,
+    sendToNode
   });
 
   app.server.on("upgrade", (request, socket, head) => {
@@ -771,6 +562,239 @@ export function buildApp(options: AppOptions = {}) {
   }
 
   return app;
+}
+
+function registerApiRoutes({
+  app,
+  authConfig,
+  registrationToken,
+  repository,
+  nodeSockets,
+  isAuthenticated,
+  requireBrowserAuth,
+  topologySnapshot,
+  broadcastTopology,
+  broadcastSession,
+  sendToNode
+}: AppRouteDeps) {
+  app.get("/api/auth/session", async (request: FastifyRequest) => ({
+    authenticated: isAuthenticated(request.cookies[authConfig.cookieName]),
+    username: authConfig.username
+  }));
+
+  app.post("/api/auth/login", async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = request.body as { password?: unknown } | undefined;
+    const password = typeof body?.password === "string" ? body.password : "";
+    if (!constantTimeStringEqual(password, authConfig.password)) {
+      reply.code(401).send({ message: "invalid password" });
+      return;
+    }
+
+    reply.setCookie(authConfig.cookieName, issueSession(authConfig, authConfig.username), {
+      httpOnly: true,
+      sameSite: "lax",
+      path: "/",
+      maxAge: Math.floor(authConfig.sessionTtlMs / 1000)
+    });
+    return { authenticated: true, username: authConfig.username };
+  });
+
+  app.post("/api/auth/logout", async (_request: FastifyRequest, reply: FastifyReply) => {
+    reply.clearCookie(authConfig.cookieName, { path: "/" });
+    return { authenticated: false };
+  });
+
+  app.get("/api/nodes", { preHandler: requireBrowserAuth }, async () => (await topologySnapshot()).nodes);
+  app.get("/api/agents", { preHandler: requireBrowserAuth }, async () => repository.listTopology().agents);
+  app.get("/api/bootstrap", { preHandler: requireBrowserAuth }, async () => ({ registrationToken }));
+  app.get("/api/trigger-rules", { preHandler: requireBrowserAuth }, async () =>
+    repository.listTopology().triggerRules
+  );
+  app.get("/api/topology", { preHandler: requireBrowserAuth }, async () => topologySnapshot());
+  app.post("/api/nodes/:nodeId/update", { preHandler: requireBrowserAuth }, async (request: FastifyRequest, reply: FastifyReply) =>
+    triggerNodeAction(request, reply, repository, nodeSockets, sendToNode, "update")
+  );
+  app.post("/api/nodes/:nodeId/detect", { preHandler: requireBrowserAuth }, async (request: FastifyRequest, reply: FastifyReply) =>
+    triggerNodeAction(request, reply, repository, nodeSockets, sendToNode, "detect")
+  );
+  app.get("/api/sessions", { preHandler: requireBrowserAuth }, async () => repository.listSessions());
+  app.get("/api/sessions/:sessionId", { preHandler: requireBrowserAuth }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const state = repository.getSession((request.params as { sessionId: string }).sessionId);
+    if (!state) {
+      reply.code(404);
+      return { message: "session not found" };
+    }
+    return state;
+  });
+
+  app.post("/api/trigger-rules", { preHandler: requireBrowserAuth }, async (request: FastifyRequest) => {
+    const body = upsertTriggerRuleRequestSchema.parse(request.body) as UpsertTriggerRuleRequest;
+    const rule = repository.upsertTriggerRule(body);
+    await broadcastTopology();
+    return rule;
+  });
+  app.delete("/api/trigger-rules/:id", { preHandler: requireBrowserAuth }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const params = request.params as { id: string };
+    const deleted = repository.deleteTriggerRule(params.id);
+    if (!deleted) {
+      reply.code(404);
+      return { message: "trigger rule not found" };
+    }
+    await broadcastTopology();
+    return { ok: true };
+  });
+
+  app.post("/api/sessions", { preHandler: requireBrowserAuth }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = createSessionRequestSchema.parse(request.body) as CreateSessionRequest;
+    const agent = repository.findAgent(body.agentId);
+    if (!agent) {
+      reply.code(404);
+      return { message: "agent not found" };
+    }
+    const session = repository.createSession(body.agentId, "user");
+    repository.updateSessionStatus(session.id, "running");
+    repository.appendSessionEvent({
+      sessionId: session.id,
+      eventType: "session.created",
+      sourceAgentId: null,
+      targetAgentId: body.agentId,
+      payload: {
+        prompt: body.prompt
+      }
+    });
+    sendToNode(agent.nodeId, {
+      type: "session.start",
+      requestId: nanoid(10),
+      sessionId: session.id,
+      source: "server",
+      target: agent.nodeId,
+      payload: sessionStartPayloadSchema.parse({
+        sessionId: session.id,
+        agentId: body.agentId,
+        prompt: body.prompt,
+        initiator: "user"
+      })
+    });
+    await broadcastSession(session.id);
+    return repository.getSession(session.id);
+  });
+
+  app.post("/api/sessions/:sessionId/input", { preHandler: requireBrowserAuth }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const params = request.params as { sessionId: string };
+    const body = appendSessionInputRequestSchema.parse(request.body);
+    const state = repository.getSession(params.sessionId);
+    if (!state) {
+      reply.code(404);
+      return { message: "session not found" };
+    }
+    const agent = repository.findAgent(state.session.entryAgentId);
+    if (!agent) {
+      reply.code(404);
+      return { message: "entry agent missing" };
+    }
+
+    repository.appendSessionEvent({
+      sessionId: state.session.id,
+      eventType: "session.prompted",
+      sourceAgentId: null,
+      targetAgentId: agent.id,
+      payload: {
+        prompt: body.prompt
+      }
+    });
+
+    sendToNode(agent.nodeId, {
+      type: "session.input",
+      requestId: nanoid(10),
+      sessionId: state.session.id,
+      source: "server",
+      target: agent.nodeId,
+      payload: sessionInputPayloadSchema.parse({
+        sessionId: state.session.id,
+        agentId: agent.id,
+        prompt: body.prompt
+      })
+    });
+    await broadcastSession(state.session.id);
+    return repository.getSession(state.session.id);
+  });
+
+  app.post("/api/sessions/:sessionId/cancel", { preHandler: requireBrowserAuth }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const params = request.params as { sessionId: string };
+    const state = repository.getSession(params.sessionId);
+    if (!state) {
+      reply.code(404);
+      return { message: "session not found" };
+    }
+    const agent = repository.findAgent(state.session.entryAgentId);
+    if (!agent) {
+      reply.code(404);
+      return { message: "entry agent missing" };
+    }
+
+    repository.updateSessionStatus(state.session.id, "cancelled");
+    repository.appendSessionEvent({
+      sessionId: state.session.id,
+      eventType: "session.cancelled",
+      sourceAgentId: null,
+      targetAgentId: agent.id,
+      payload: {
+        reason: "user_cancelled"
+      }
+    });
+
+    sendToNode(agent.nodeId, {
+      type: "session.cancel",
+      requestId: nanoid(10),
+      sessionId: state.session.id,
+      source: "server",
+      target: agent.nodeId,
+      payload: {
+        sessionId: state.session.id,
+        agentId: agent.id,
+        reason: "user_cancelled"
+      }
+    });
+
+    await broadcastSession(state.session.id);
+    return repository.getSession(state.session.id);
+  });
+}
+
+async function triggerNodeAction(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  repository: Repository,
+  nodeSockets: Map<string, NodeSocket>,
+  sendToNode: (nodeId: string, envelope: ProtocolEnvelope) => void,
+  action: "update" | "detect"
+) {
+  const params = request.params as { nodeId: string };
+  const node = repository.findNode(params.nodeId);
+  if (!node) {
+    reply.code(404);
+    return { message: "node not found" };
+  }
+  if (node.status !== "online") {
+    reply.code(409);
+    return { message: `node must be online to ${action === "update" ? "update" : "detect agents"}` };
+  }
+  if (!nodeSockets.has(node.id)) {
+    reply.code(409);
+    return { message: "node socket is not connected" };
+  }
+
+  sendToNode(node.id, {
+    type: action === "update" ? "node.update" : "node.detect",
+    requestId: nanoid(10),
+    sessionId: null,
+    source: "server",
+    target: node.id,
+    payload: {
+      nodeId: node.id
+    }
+  });
+  return { ok: true };
 }
 
 async function sendStaticFile(reply: { type: (contentType: string) => void; send: (payload: Buffer) => void }, staticRoot: string, assetPath: string) {
