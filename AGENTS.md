@@ -12,6 +12,7 @@ Current docs to maintain:
 Decision docs:
 
 - [deployment shape](docs/deployment.md)
+- [ACP alias bridge](docs/acp-alias-bridge.md)
 
 Working rules:
 

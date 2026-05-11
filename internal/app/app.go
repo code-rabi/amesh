@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/NitayRabi/amesh/internal/acpbridge"
+	"github.com/NitayRabi/amesh/internal/acpconfig"
 	"github.com/NitayRabi/amesh/internal/acpx"
 	"github.com/NitayRabi/amesh/internal/nodeclient"
 	"github.com/NitayRabi/amesh/internal/nodeconfig"
@@ -50,7 +52,7 @@ func (err retryableDaemonError) Unwrap() error {
 // Run executes the node daemon CLI.
 func Run(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return errors.New("expected subcommand: register, run, or update")
+		return errors.New("expected subcommand: register, run, update, or acp")
 	}
 
 	switch args[0] {
@@ -60,9 +62,37 @@ func Run(ctx context.Context, args []string) error {
 		return runDaemon(ctx, args[1:])
 	case "update":
 		return runUpdate(ctx, os.Stdout, os.Stderr)
+	case "acp":
+		return runACPBridge(ctx, args[1:], os.Stdin, os.Stdout)
 	default:
 		return fmt.Errorf("unknown subcommand %q", args[0])
 	}
+}
+
+func runACPBridge(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
+	flags := flag.NewFlagSet("acp", flag.ContinueOnError)
+	configPath := flags.String("config", acpconfig.DefaultPath(), "path to ACP alias config")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 1 {
+		return errors.New("usage: amesh acp [--config path] <alias>")
+	}
+
+	alias, err := acpconfig.LoadAlias(*configPath, flags.Arg(0))
+	if err != nil {
+		return err
+	}
+
+	bridge, err := acpbridge.New(ctx, alias)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = bridge.Close()
+	}()
+
+	return bridge.Serve(ctx, stdin, stdout)
 }
 
 func runUpdate(ctx context.Context, stdout, stderr io.Writer) error {

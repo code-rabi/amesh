@@ -36,6 +36,21 @@ sh -n scripts/install-amesh-node.sh
 - The daemon now keeps running when the control plane goes away. It retries websocket connect, `node.resume`, and capability sync with backoff until the server returns.
 - Agent topology status is derived from daemon-side ACPX health probes, not just from the node websocket being connected. Unhealthy local agents are omitted from capability sync and appear offline in the control plane.
 - `install-amesh-node.sh` downloads the released `amesh-node` binary for the current platform, installs a managed ACPX sidecar under `~/.local/share/amesh/acpx`, and exports `AMESH_ACPX_PATH` for the service.
+- ACP aliases for external clients can be served locally with `go run ./cmd/amesh acp <alias>`. The default alias registry is `~/.config/amesh/acp.json`:
+
+```json
+{
+  "aliases": {
+    "mesh-reviewer": {
+      "serverUrl": "http://127.0.0.1:3001",
+      "agentId": "agent-codex",
+      "passwordEnv": "AMESH_PASSWORD"
+    }
+  }
+}
+```
+
+- An `acpx` alias can then point at `amesh acp mesh-reviewer`, letting OpenClaw or another ACP client treat the mesh-exported agent like any other local harness id.
 - Remote node install no longer requires `go`; it still requires `curl`, `tar`, `npm`, and the actual local agent CLIs you want ACPX to call.
 - The server websocket tests bind a local port, so restricted sandboxes may require escalation for that package-level verification.
 - `corepack pnpm --filter @amesh/server smoke` runs a scripted local proof for node registration, direct chat, denied routing, and allowed cross-node routing using websocket-backed fake nodes.
