@@ -27,7 +27,8 @@ import {
   sessionInputPayloadSchema,
   sessionStartPayloadSchema,
   topologySnapshotSchema,
-  upsertTriggerRuleRequestSchema
+  upsertTriggerRuleRequestSchema,
+  z
 } from "@amesh/protocol";
 import cookie from "@fastify/cookie";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
@@ -606,6 +607,31 @@ function registerApiRoutes({
 
   app.get("/api/nodes", { preHandler: requireBrowserAuth }, async () => (await topologySnapshot()).nodes);
   app.get("/api/agents", { preHandler: requireBrowserAuth }, async () => repository.listTopology().agents);
+  app.patch("/api/agents/:id", { preHandler: requireBrowserAuth }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const params = request.params as { id?: string };
+    const body = (request.body ?? {}) as { displayName?: string | null };
+    const rawName = body.displayName;
+    if (typeof params.id !== "string") {
+      reply.code(400);
+      return { message: "invalid agent id" };
+    }
+    if (!(rawName === null || rawName === undefined || typeof rawName === "string")) {
+      reply.code(400);
+      return { message: "invalid display name" };
+    }
+    const normalized = typeof rawName === "string" ? rawName.trim() : null;
+    if (normalized && normalized.length > 64) {
+      reply.code(400);
+      return { message: "display name too long" };
+    }
+    const renamed = repository.renameAgent(params.id, normalized && normalized.length > 0 ? normalized : null);
+    if (!renamed) {
+      reply.code(404);
+      return { message: "agent not found" };
+    }
+    await broadcastTopology();
+    return renamed;
+  });
   app.get("/api/bootstrap", { preHandler: requireBrowserAuth }, async () => ({ registrationToken }));
   app.get("/api/trigger-rules", { preHandler: requireBrowserAuth }, async () =>
     repository.listTopology().triggerRules

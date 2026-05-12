@@ -141,3 +141,13 @@ export function connectRealtime(onEvent: (event: BrowserRealtimeEvent) => void) 
 
   return socket;
 }
+
+
+export async function renameAgent(agentId: string, displayName: string | null): Promise<void> {
+  const response = await apiFetch(`/api/agents/${agentId}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ displayName })
+  });
+  if (!response.ok) throw new Error("Rename failed");
+}

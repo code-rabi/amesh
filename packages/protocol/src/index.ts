@@ -42,6 +42,7 @@ export const agentSchema = z.object({
   id: z.string(),
   nodeId: z.string(),
   name: z.string(),
+  displayName: z.string().nullable().default(null),
   backend: z.literal("acpx"),
   status: agentStatusSchema,
   capabilities: payloadSchema

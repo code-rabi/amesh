@@ -76,6 +76,7 @@ beforeEach(() => {
               id: "agent-1",
               nodeId: "node-1",
               name: "Planner",
+              displayName: null,
               backend: "acpx",
               status: "online",
               capabilities: {}

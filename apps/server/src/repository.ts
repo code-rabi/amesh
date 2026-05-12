@@ -175,6 +175,7 @@ export class Repository {
           id: capability.id,
           nodeId,
           name: capability.name,
+          displayName: null,
           backend: "acpx",
           status: "online",
           capabilities: JSON.stringify({
@@ -224,6 +225,7 @@ export class Repository {
         id: row.id,
         nodeId: row.nodeId,
         name: row.name,
+        displayName: row.displayName ?? null,
         backend: row.backend,
         status: row.status,
         capabilities: parseJson<Record<string, unknown>>(row.capabilities)
@@ -243,6 +245,17 @@ export class Repository {
       agents,
       triggerRules
     };
+  }
+
+
+  renameAgent(agentId: string, displayName: string | null) {
+    const changes = this.db
+      .update(agentsTable)
+      .set({ displayName })
+      .where(eq(agentsTable.id, agentId))
+      .run().changes;
+    if (!changes) return null;
+    return this.findAgent(agentId);
   }
 
   upsertTriggerRule(input: {
@@ -428,6 +441,7 @@ export class Repository {
       id: row.id,
       nodeId: row.nodeId,
       name: row.name,
+      displayName: row.displayName ?? null,
       backend: row.backend,
       status: row.status,
       capabilities: parseJson<Record<string, unknown>>(row.capabilities)
