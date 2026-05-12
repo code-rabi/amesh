@@ -50,6 +50,7 @@ sh -n scripts/install-amesh-node.sh
 - `install-amesh-node.sh` downloads the released `amesh-node` binary for the current platform, installs a managed ACPX sidecar under `~/.local/share/amesh/acpx`, and exports `AMESH_ACPX_PATH` for the service.
 - The installer now logs whether it is reusing or creating config/state, and on systemd hosts it fails the install if the user service does not remain active after startup. When that happens it prints both `systemctl --user status` and recent `journalctl --user -u amesh-node` output.
 - `install-amesh-node.sh` also normalizes `~/.acpx/config.json` so ACPX non-interactive health probes start from a valid baseline on first install.
+- Detected agents now persist the registering shell's `PATH` into node config. This avoids later service-only regressions where a systemd user unit resolves a different `node` binary than the interactive shell that successfully ran the same agent CLI.
 - ACP aliases for external clients can be served locally with `go run ./cmd/amesh acp <alias>`. The default alias registry is `~/.config/amesh/acp.json`:
 
 ```json
@@ -65,7 +66,8 @@ sh -n scripts/install-amesh-node.sh
 ```
 
 - An `acpx` alias can then point at `amesh acp mesh-reviewer`, letting OpenClaw or another ACP client treat the mesh-exported agent like any other local harness id.
-- Remote node install no longer requires `go`; it still requires `curl`, `tar`, `npm`, and the actual local agent CLIs you want ACPX to call.
+- Remote node install no longer requires `go`; it does require `node` `22.x`, `npm`, `curl`, `tar`, and the actual local agent CLIs you want ACPX to call.
+- That `node` requirement is not just for the installer: many ACPX-backed agent CLIs are themselves Node programs, so the daemon must keep seeing the same `PATH` and Node runtime that made those CLIs work during registration.
 - The server websocket tests bind a local port, so restricted sandboxes may require escalation for that package-level verification.
 - `corepack pnpm --filter @amesh/server smoke` runs a scripted local proof for node registration, direct chat, denied routing, and allowed cross-node routing using websocket-backed fake nodes.
 - If the workspace host does not have `go` preinstalled, install or point to a local Go `1.22+` toolchain before running daemon tests.

@@ -59,6 +59,12 @@
 - Consequence: a host could look "installed" locally while the dashboard stayed empty and there was no immediate clue whether detection, registration, or service startup had failed.
 - Mitigation: the installer now logs each detect/register decision, fails fast if the systemd user service does not stay active, and prints service status plus recent journal lines. The daemon also logs detect, register, resume, and capability-sync milestones to stderr.
 
+## 2026-05-12: Registered nodes could advertise agent CLIs that only worked in the installer shell
+
+- Detection ran in an interactive shell, but later session launches and health probes ran from the long-lived daemon environment. On hosts that used `nvm` or another shell-managed Node install, the service could resolve a different `node` binary than the one that made `copilot`, `cursor`, or `opencode` work during registration.
+- Consequence: a fresh node could advertise agents, yet the dashboard showed runtime errors like `/usr/bin/env: 'node': No such file or directory` or `toSorted is not a function` once the daemon tried to execute them.
+- Mitigation: detected agent configs now persist the working shell `PATH`, and the installer now fails fast unless `node` `22.x+` is available before it installs the daemon service. Covered by a Go detection test that asserts the saved agent env includes the original `PATH`.
+
 ## 2026-05-11: Node inventory had no lightweight way to express multiple working directories
 
 - The node config only described base agents, so a single machine could not advertise the same local agent across multiple useful workspaces without hand-editing duplicate agent entries.

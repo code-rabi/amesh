@@ -23,6 +23,8 @@ Initial product and architecture details live in [docs/design/mvp-design.md](/ho
 - The root [Dockerfile](/home/nitayr/projects/amesh/Dockerfile) builds the web assets and serves them from the Fastify server process.
 - The remote node remains a separate daemon installed on target machines.
 - The node installer manages an internal ACPX sidecar so remote hosts do not need a separate global `acpx` install.
+- Remote node install does not require `go`, but it does require `node` `22.x`, `npm`, `curl`, and `tar`.
+- That `node` requirement is runtime-critical, not just an installer detail: many ACPX-backed agent CLIs are Node programs, so the daemon must later see the same `PATH` and Node runtime that made those CLIs work during registration.
 
 Install the remote node with one command:
 
