@@ -1,4 +1,10 @@
-import type { BrowserRealtimeEvent, TopologySnapshot, TriggerRule } from "@amesh/protocol";
+import type {
+  BrowserRealtimeEvent,
+  BrowseNodeDirectoriesResponse,
+  TopologySnapshot,
+  TriggerRule
+} from "@amesh/protocol";
+import { browseNodeDirectoriesResponseSchema } from "@amesh/protocol";
 
 import type { SessionSummary, SessionView } from "./types.js";
 
@@ -91,6 +97,25 @@ export async function updateNodePaths(nodeId: string, paths: string[]): Promise<
     const body = (await response.json().catch(() => null)) as { message?: string } | null;
     throw new Error(body?.message ?? "Path update failed");
   }
+}
+
+export async function fetchNodeDirectories(nodeId: string, path?: string): Promise<BrowseNodeDirectoriesResponse> {
+  const url = new URL(`${serverUrl().origin}/api/nodes/${nodeId}/directories`);
+  if (path) {
+    url.searchParams.set("path", path);
+  }
+  const response = await fetch(url, {
+    credentials: "include"
+  });
+  if (response.status === 401) {
+    window.dispatchEvent(new Event(unauthorizedEvent));
+    throw new ApiUnauthorizedError();
+  }
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(body?.message ?? "Directory browse failed");
+  }
+  return browseNodeDirectoriesResponseSchema.parse(await response.json());
 }
 
 export async function createTriggerRule(input: {

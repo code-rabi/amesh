@@ -6,6 +6,13 @@
 - Consequence: `pnpm --filter @amesh/server smoke` crashed before it could validate the MVP path, even though the rest of the JS test suite stayed green.
 - Mitigation: the smoke flow now logs in first, and the root `corepack pnpm check` gate includes smoke so GitHub Actions catches the same regression path.
 
+## Local daemon failed on stale ACPX user config
+
+- Date: 2026-05-12
+- Symptom: `pnpm dev:daemon` detected agents but their health probes failed immediately with `Invalid config nonInteractivePermissions in ~/.acpx/config.json: expected deny or fail`.
+- Cause: our bootstrap installed ACPX but did not validate or create the ACPX user config, so stale local values like `approve-all` in `nonInteractivePermissions` broke first-run non-interactive probes.
+- Mitigation: both `scripts/dev-daemon.sh` and `install-amesh-node.sh` now normalize `~/.acpx/config.json` before detect/register and force `nonInteractivePermissions` to a valid baseline when missing or invalid.
+
 ## 2026-05-11: Quality checks covered behavior better than structural drift
 
 - The repo had behavior checks, but nothing blocked merges for unused TypeScript surface area or repo-level architecture rule regressions.
@@ -18,6 +25,12 @@
 - Consequence: fresh nodes looked broken or permanently offline because the first advertised inventory was a placeholder and health probing immediately knocked those fake agents out.
 - Mitigation: the daemon now has a first-class `detect` command, uses detection as the default config bootstrap path, and the dashboard can trigger detection on an online node to refresh inventory in place.
 - Follow-up: detection now prefers the managed ACPX sidecar path automatically and records installed local agent CLIs before health filtering, so slow ACPX providers do not disappear from config generation.
+
+## 2026-05-12: Local dev daemon could stay pinned to example config through saved state
+
+- `pnpm dev:daemon` correctly defaulted to `.amesh-agents.json`, but an existing `.amesh-node-state.json` could still point at `examples/agents.json` and silently override that default on later runs.
+- Consequence: local development could keep mutating or reading the example config, and the dashboard would show stale demo inventory instead of the real detected local agents.
+- Mitigation: `scripts/dev-daemon.sh` now refuses `examples/agents.json` as the local dev config target and deletes stale local daemon state that still references the example config before re-detecting into `.amesh-agents.json`.
 
 ## 2026-05-11: Missing Go toolchain in local automation
 

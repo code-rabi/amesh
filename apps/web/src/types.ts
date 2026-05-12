@@ -5,6 +5,7 @@ export type SessionView = {
     initiator: "user" | "agent";
     status: string;
     createdAt: string;
+    cwd: string | null;
     parentSessionId: string | null;
     sourceAgentId: string | null;
   };

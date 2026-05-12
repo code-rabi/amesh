@@ -1,9 +1,7 @@
 import type { TopologySnapshot } from "@amesh/protocol";
 
 import { relativeTime } from "../lib/time.js";
-import { NodeDetectButton } from "./NodeDetectButton.js";
-import { NodePathsButton } from "./NodePathsButton.js";
-import { NodeUpdateButton } from "./NodeUpdateButton.js";
+import { NodeSettingsButton } from "./NodeSettingsButton.js";
 
 type Props = { topology: TopologySnapshot };
 
@@ -36,9 +34,7 @@ export function NarrowFallback({ topology }: Props) {
               </div>
               <div className="narrow-card__meta">
                 <span className={`pill pill-${node.status}`}>{node.status}</span>
-                <NodePathsButton node={node} agents={agents} compact />
-                <NodeDetectButton node={node} compact />
-                <NodeUpdateButton node={node} compact />
+                <NodeSettingsButton node={node} agents={agents} />
               </div>
             </header>
 
@@ -57,6 +53,28 @@ export function NarrowFallback({ topology }: Props) {
                       <>
                         {" "}
                         <span className="host">[{agent.capabilities.cwd}]</span>
+                      </>
+                    ) : null}
+                    {agent.status === "error" ? (
+                      <>
+                        {" "}
+                        <NodeSettingsButton
+                          node={node}
+                          agents={agents}
+                          startTab="agents"
+                          renderTrigger={({ open, openModal }) => (
+                            <button
+                              type="button"
+                              className="narrow-card__error-link"
+                              aria-label={`Open error details for ${agent.name} on ${node.name}`}
+                              aria-haspopup="dialog"
+                              aria-expanded={open}
+                              onClick={openModal}
+                            >
+                              error
+                            </button>
+                          )}
+                        />
                       </>
                     ) : null}
                   </li>

@@ -18,11 +18,21 @@ type Props = {
   session: SessionView | null;
   activeAgent: AgentRecord | null;
   topology: TopologySnapshot;
+  launchAgents?: AgentRecord[];
+  onSelectLaunchAgent?: (agentId: string) => void;
+  scopeLabel?: string | null;
 };
 
 const ShowAcpContext = createContext(false);
 
-export function AssistantChat({ session, activeAgent, topology }: Props) {
+export function AssistantChat({
+  session,
+  activeAgent,
+  topology,
+  launchAgents = [],
+  onSelectLaunchAgent,
+  scopeLabel
+}: Props) {
   const { runtime, sendError, clearSendError } = useAmeshThreadRuntime(activeAgent);
   const [showAcp, setShowAcp] = useState(false);
 
@@ -41,6 +51,9 @@ export function AssistantChat({ session, activeAgent, topology }: Props) {
             <NewSessionIntro
               agent={activeAgent}
               topology={topology}
+              launchAgents={launchAgents}
+              onSelectLaunchAgent={onSelectLaunchAgent}
+              scopeLabel={scopeLabel ?? null}
               showAcp={showAcp}
               onToggleAcp={() => setShowAcp((v) => !v)}
             />
@@ -94,9 +107,9 @@ function AcpToggle({
       data-on={showAcp}
       onClick={onToggle}
       title={showAcp ? "Hide ACP debug events" : "Show ACP debug events"}
+      aria-label={showAcp ? "Hide ACP debug events" : "Show ACP debug events"}
       aria-pressed={showAcp}
     >
-      <span className="acp-toggle__dot" aria-hidden />
       <span>ACP</span>
     </button>
   );
@@ -114,20 +127,30 @@ function ChatHeader({
   onToggleAcp: () => void;
 }) {
   const agent = activeAgent;
+  const cwd =
+    session.session.cwd ?? (typeof agent?.capabilities.cwd === "string" ? agent.capabilities.cwd : null);
   return (
     <header className="chat__header">
-      <div className="chat__title">
-        {agent ? <AgentAvatar id={agent.id} name={agent.name} size={28} /> : null}
-        <div>
-          <h2>{agent?.name ?? session.session.entryAgentId}</h2>
-          <div className="chat__meta">
-            <span className="font-mono">{session.session.id}</span>
-            <span aria-hidden>·</span>
-            <span>{relativeTime(session.session.createdAt)}</span>
+      <AcpToggle showAcp={showAcp} onToggle={onToggleAcp} />
+      <div className="chat__header-main">
+        <div className="chat__title">
+          {agent ? <AgentAvatar id={agent.id} name={agent.name} size={28} /> : null}
+          <div>
+            <h2>{agent?.name ?? session.session.entryAgentId}</h2>
+            <div className="chat__meta">
+              <span className="font-mono">{session.session.id}</span>
+              <span aria-hidden>·</span>
+              <span>{relativeTime(session.session.createdAt)}</span>
+              {cwd ? (
+                <>
+                  <span aria-hidden>·</span>
+                  <span className="font-mono">{cwd}</span>
+                </>
+              ) : null}
+            </div>
           </div>
         </div>
       </div>
-      <AcpToggle showAcp={showAcp} onToggle={onToggleAcp} />
     </header>
   );
 }
@@ -135,30 +158,116 @@ function ChatHeader({
 function NewSessionIntro({
   agent,
   topology,
+  launchAgents,
+  onSelectLaunchAgent,
+  scopeLabel,
   showAcp,
   onToggleAcp
 }: {
   agent: AgentRecord;
   topology: TopologySnapshot;
+  launchAgents: AgentRecord[];
+  onSelectLaunchAgent?: (agentId: string) => void;
+  scopeLabel: string | null;
   showAcp: boolean;
   onToggleAcp: () => void;
 }) {
   const host =
     topology.nodes.find((node) => node.id === agent.nodeId)?.name ?? agent.nodeId;
+  const cwd = typeof agent.capabilities.cwd === "string" ? agent.capabilities.cwd : null;
+  const [agentMenuOpen, setAgentMenuOpen] = useState(false);
   return (
     <header className="chat__header">
-      <div className="chat__title">
-        <AgentAvatar id={agent.id} name={agent.name} size={28} />
-        <div>
-          <h2>{agent.name}</h2>
-          <div className="chat__meta">
-            <span>{host}</span>
-            <span aria-hidden>·</span>
-            <span>new session</span>
+      <AcpToggle showAcp={showAcp} onToggle={onToggleAcp} />
+      <div className="chat__header-main">
+        <div className="chat__title">
+          <AgentAvatar id={agent.id} name={agent.name} size={28} />
+          <div>
+            <h2>{agent.name}</h2>
+            <div className="chat__meta">
+              <span>{host}</span>
+              <span aria-hidden>·</span>
+              <span>new session</span>
+              {scopeLabel ? (
+                <>
+                  <span aria-hidden>·</span>
+                  <span>{scopeLabel}</span>
+                </>
+              ) : null}
+              {cwd ? (
+                <>
+                  <span aria-hidden>·</span>
+                  <span className="font-mono">{cwd}</span>
+                </>
+              ) : null}
+            </div>
           </div>
         </div>
+        {launchAgents.length > 1 && onSelectLaunchAgent ? (
+          <div
+            className="chat__agent-select"
+            onBlur={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                setAgentMenuOpen(false);
+              }
+            }}
+          >
+            <span className="chat__agent-select-label">Agent</span>
+            <button
+              type="button"
+              className="chat__agent-trigger"
+              aria-haspopup="listbox"
+              aria-expanded={agentMenuOpen}
+              aria-label="Launch agent"
+              onClick={() => setAgentMenuOpen((value) => !value)}
+            >
+              <span className="chat__agent-trigger-main">
+                <AgentAvatar id={agent.id} name={agent.name} size={20} />
+                <span className="chat__agent-trigger-copy">
+                  <span className="chat__agent-trigger-name">{agent.name}</span>
+                  <span className="chat__agent-trigger-meta">{launchAgents.length} available in this folder</span>
+                </span>
+              </span>
+              <span className="chat__agent-trigger-caret" aria-hidden>
+                {agentMenuOpen ? "−" : "+"}
+              </span>
+            </button>
+            {agentMenuOpen ? (
+              <div className="chat__agent-menu" role="listbox" aria-label="Launch agent options">
+                {launchAgents.map((option) => {
+                  const selected = option.id === agent.id;
+                  const disabled = option.status !== "online";
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      role="option"
+                      className="chat__agent-menu-option"
+                      data-selected={selected}
+                      aria-selected={selected}
+                      disabled={disabled}
+                      onClick={() => {
+                        onSelectLaunchAgent(option.id);
+                        setAgentMenuOpen(false);
+                      }}
+                      title={disabled ? `${option.name} is ${option.status}` : `Switch to ${option.name}`}
+                    >
+                      <span className="chat__agent-menu-option-main">
+                        <AgentAvatar id={option.id} name={option.name} size={18} />
+                        <span className="chat__agent-option-copy">
+                          <span className="chat__agent-option-name">{option.name}</span>
+                          <span className="chat__agent-option-status font-mono">{option.id}</span>
+                        </span>
+                      </span>
+                      <span className={`pill pill-${option.status}`}>{option.status}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
-      <AcpToggle showAcp={showAcp} onToggle={onToggleAcp} />
     </header>
   );
 }

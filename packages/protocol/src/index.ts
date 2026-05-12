@@ -30,6 +30,7 @@ export const nodeSchema = z.object({
   status: nodeStatusSchema,
   host: z.string(),
   labels: z.array(z.string()),
+  paths: z.array(z.string()).default([]),
   registeredAt: z.string(),
   lastSeenAt: z.string().nullable(),
   version: z.string().nullable().default(null),
@@ -62,6 +63,7 @@ export const sessionSchema = z.object({
   initiator: sessionInitiatorSchema,
   status: sessionStatusSchema,
   createdAt: z.string(),
+  cwd: z.string().nullable().default(null),
   parentSessionId: z.string().nullable().default(null),
   sourceAgentId: z.string().nullable().default(null)
 });
@@ -100,6 +102,8 @@ export const capabilitySchema = z.object({
   acpxAgent: z.string(),
   command: z.string(),
   args: z.array(z.string()).default([]),
+  status: agentStatusSchema.default("online"),
+  error: z.string().optional(),
   cwd: z.string().optional(),
   env: z.record(z.string(), z.string()).default({}),
   labels: z.array(z.string()).default([])
@@ -146,6 +150,45 @@ export const nodePathsUpdatePayloadSchema = z.object({
   paths: z.array(z.string())
 });
 export type NodePathsUpdatePayload = z.infer<typeof nodePathsUpdatePayloadSchema>;
+
+export const browseNodeDirectoriesQuerySchema = z.object({
+  path: z.string().optional()
+});
+export type BrowseNodeDirectoriesQuery = z.infer<
+  typeof browseNodeDirectoriesQuerySchema
+>;
+
+export const directoryEntrySchema = z.object({
+  name: z.string(),
+  path: z.string(),
+  hasChildren: z.boolean()
+});
+export type DirectoryEntry = z.infer<typeof directoryEntrySchema>;
+
+export const nodeDirectoryBrowsePayloadSchema = z.object({
+  nodeId: z.string(),
+  path: z.string().default("")
+});
+export type NodeDirectoryBrowsePayload = z.infer<
+  typeof nodeDirectoryBrowsePayloadSchema
+>;
+
+export const nodeDirectoryBrowseResultPayloadSchema = z.object({
+  nodeId: z.string(),
+  path: z.string(),
+  entries: z.array(directoryEntrySchema)
+});
+export type NodeDirectoryBrowseResultPayload = z.infer<
+  typeof nodeDirectoryBrowseResultPayloadSchema
+>;
+
+export const browseNodeDirectoriesResponseSchema =
+  nodeDirectoryBrowseResultPayloadSchema.omit({
+    nodeId: true
+  });
+export type BrowseNodeDirectoriesResponse = z.infer<
+  typeof browseNodeDirectoriesResponseSchema
+>;
 
 export const sessionStartPayloadSchema = z.object({
   sessionId: z.string(),

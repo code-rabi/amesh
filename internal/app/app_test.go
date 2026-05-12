@@ -75,8 +75,8 @@ func TestRunDaemonLoopReconnectsAfterDisconnect(t *testing.T) {
 				next++
 				return client
 			},
-			func(context.Context, nodeconfig.AgentConfig) bool {
-				return true
+			func(context.Context, nodeconfig.AgentConfig) error {
+				return nil
 			},
 			func(ctx context.Context, delay time.Duration) error {
 				mu.Lock()
@@ -179,7 +179,7 @@ func TestRunDaemonSessionHandlesNodeUpdate(t *testing.T) {
 		acpx.Runner{},
 		newSessionStore(),
 		func(string) daemonClient { return client },
-		func(context.Context, nodeconfig.AgentConfig) bool { return true },
+		func(context.Context, nodeconfig.AgentConfig) error { return nil },
 		func(context.Context, io.Writer, io.Writer) error {
 			called = true
 			return nil
@@ -227,7 +227,7 @@ func TestRunDaemonSessionHandlesNodeDetect(t *testing.T) {
 		acpx.Runner{},
 		newSessionStore(),
 		func(string) daemonClient { return client },
-		func(context.Context, nodeconfig.AgentConfig) bool { return true },
+		func(context.Context, nodeconfig.AgentConfig) error { return nil },
 		func(context.Context, io.Writer, io.Writer) error { return nil },
 		func(_ context.Context, path string) error {
 			called = true
@@ -282,9 +282,9 @@ func TestRunDaemonSessionHandlesNodePathUpdate(t *testing.T) {
 		acpx.Runner{},
 		newSessionStore(),
 		func(string) daemonClient { return client },
-		func(context.Context, nodeconfig.AgentConfig) bool {
+		func(context.Context, nodeconfig.AgentConfig) error {
 			cancel()
-			return true
+			return nil
 		},
 		func(context.Context, io.Writer, io.Writer) error { return nil },
 		func(context.Context, string) error { return nil },
@@ -327,7 +327,7 @@ func TestConfiguredAgentsKeepsBaseAgentsUnchanged(t *testing.T) {
 	}
 }
 
-func TestFilterHealthyAgents(t *testing.T) {
+func TestCapabilitiesWithStatus(t *testing.T) {
 	t.Parallel()
 
 	agents := []nodeconfig.AgentConfig{
@@ -335,12 +335,21 @@ func TestFilterHealthyAgents(t *testing.T) {
 		{ID: "down", Name: "Down", ACPXAgent: "down"},
 	}
 
-	got := filterHealthyAgents(context.Background(), agents, func(_ context.Context, agent nodeconfig.AgentConfig) bool {
-		return agent.ID != "down"
+	got := capabilitiesWithStatus(context.Background(), agents, func(_ context.Context, agent nodeconfig.AgentConfig) error {
+		if agent.ID == "down" {
+			return errors.New("missing auth")
+		}
+		return nil
 	})
 
-	if len(got) != 1 || got[0].ID != "healthy" {
-		t.Fatalf("filterHealthyAgents() = %#v, want only healthy agent", got)
+	if len(got) != 2 {
+		t.Fatalf("capabilitiesWithStatus() len = %d, want 2", len(got))
+	}
+	if got[0]["status"] != "online" || got[1]["status"] != "error" {
+		t.Fatalf("capabilitiesWithStatus() = %#v, want online/error statuses", got)
+	}
+	if got[1]["error"] != "missing auth" {
+		t.Fatalf("capabilitiesWithStatus() error = %#v, want missing auth", got[1]["error"])
 	}
 }
 
@@ -436,6 +445,8 @@ exit 1
 			Name:      "Claude",
 			ACPXAgent: "claude",
 			Command:   managed,
+			Args:      []string{},
+			Env:       map[string]string{},
 			Labels:    []string{"detected"},
 		},
 		{
@@ -443,6 +454,8 @@ exit 1
 			Name:      "Codex",
 			ACPXAgent: "codex",
 			Command:   managed,
+			Args:      []string{},
+			Env:       map[string]string{},
 			Labels:    []string{"detected"},
 		},
 	}

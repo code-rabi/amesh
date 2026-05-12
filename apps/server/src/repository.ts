@@ -37,6 +37,7 @@ export class Repository {
       name: input.name,
       host: input.host,
       labels: input.labels,
+      paths: [],
       status: "online",
       registeredAt: new Date().toISOString(),
       lastSeenAt: new Date().toISOString(),
@@ -52,6 +53,7 @@ export class Repository {
         name: node.name,
         host: node.host,
         labels: JSON.stringify(node.labels),
+        paths: JSON.stringify(node.paths),
         reconnectToken: nanoid(24),
         status: node.status,
         registeredAt: node.registeredAt,
@@ -100,6 +102,7 @@ export class Repository {
       status: row.status,
       host: row.host,
       labels: parseJson<string[]>(row.labels),
+      paths: parseJson<string[]>(row.paths ?? "[]"),
       registeredAt: row.registeredAt,
       lastSeenAt: row.lastSeenAt ?? null
     });
@@ -131,6 +134,7 @@ export class Repository {
       status: "online",
       host: row.host,
       labels: parseJson<string[]>(row.labels),
+      paths: parseJson<string[]>(row.paths ?? "[]"),
       registeredAt: row.registeredAt,
       lastSeenAt: observedAt
     });
@@ -160,6 +164,16 @@ export class Repository {
       .run();
   }
 
+  setNodePaths(nodeId: string, paths: string[]) {
+    this.db
+      .update(nodesTable)
+      .set({
+        paths: JSON.stringify(paths)
+      })
+      .where(eq(nodesTable.id, nodeId))
+      .run();
+  }
+
   syncCapabilities(nodeId: string, capabilities: Capability[]) {
     const existing = this.db
       .select()
@@ -176,9 +190,10 @@ export class Repository {
           nodeId,
           name: capability.name,
           backend: "acpx",
-          status: "online",
+          status: capability.status,
           capabilities: JSON.stringify({
             acpxAgent: capability.acpxAgent,
+            error: capability.error,
             cwd: capability.cwd,
             labels: capability.labels
           })
@@ -187,9 +202,10 @@ export class Repository {
           target: agentsTable.id,
           set: {
             name: capability.name,
-            status: "online",
+            status: capability.status,
             capabilities: JSON.stringify({
               acpxAgent: capability.acpxAgent,
+              error: capability.error,
               cwd: capability.cwd,
               labels: capability.labels
             })
@@ -217,6 +233,7 @@ export class Repository {
         status: row.status,
         host: row.host,
         labels: parseJson<string[]>(row.labels),
+        paths: parseJson<string[]>(row.paths ?? "[]"),
         registeredAt: row.registeredAt,
         lastSeenAt: row.lastSeenAt ?? null
       })
@@ -299,13 +316,18 @@ export class Repository {
     return true;
   }
 
-  createSession(entryAgentId: string, initiator: "user" | "agent") {
+  createSession(input: {
+    entryAgentId: string;
+    initiator: "user" | "agent";
+    cwd: string | null;
+  }) {
     const session: SessionRecord = {
       id: nanoid(12),
-      entryAgentId,
-      initiator,
+      entryAgentId: input.entryAgentId,
+      initiator: input.initiator,
       status: "pending",
       createdAt: new Date().toISOString(),
+      cwd: input.cwd,
       parentSessionId: null,
       sourceAgentId: null
     };
@@ -316,6 +338,7 @@ export class Repository {
   createLinkedSession(input: {
     entryAgentId: string;
     initiator: "user" | "agent";
+    cwd: string | null;
     parentSessionId: string | null;
     sourceAgentId: string | null;
   }) {
@@ -325,6 +348,7 @@ export class Repository {
       initiator: input.initiator,
       status: "pending",
       createdAt: new Date().toISOString(),
+      cwd: input.cwd,
       parentSessionId: input.parentSessionId,
       sourceAgentId: input.sourceAgentId
     };

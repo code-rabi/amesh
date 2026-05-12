@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   capabilitySchema,
+  browseNodeDirectoriesResponseSchema,
   browserRealtimeEventSchema,
+  nodeDirectoryBrowsePayloadSchema,
   parseProtocolEnvelope,
   protocolEnvelopeSchema,
+  sessionSchema,
   sessionStartPayloadSchema
 } from "../src/index.js";
 
@@ -36,6 +39,18 @@ describe("protocol schema", () => {
     expect(payload.metadata).toEqual({});
   });
 
+  it("defaults omitted session cwd to null", () => {
+    const session = sessionSchema.parse({
+      id: "ses_1",
+      entryAgentId: "agent_1",
+      initiator: "user",
+      status: "pending",
+      createdAt: new Date().toISOString()
+    });
+
+    expect(session.cwd).toBeNull();
+  });
+
   it("validates browser realtime events", () => {
     const event = browserRealtimeEventSchema.parse({
       type: "topology.snapshot",
@@ -58,5 +73,24 @@ describe("protocol schema", () => {
     });
 
     expect(capability.args).toEqual([]);
+  });
+
+  it("validates node directory browse payloads and responses", () => {
+    const payload = nodeDirectoryBrowsePayloadSchema.parse({
+      nodeId: "node_1"
+    });
+    const response = browseNodeDirectoriesResponseSchema.parse({
+      path: "/srv/work",
+      entries: [
+        {
+          name: "repo-a",
+          path: "/srv/work/repo-a",
+          hasChildren: true
+        }
+      ]
+    });
+
+    expect(payload.path).toBe("");
+    expect(response.entries[0]?.path).toBe("/srv/work/repo-a");
   });
 });

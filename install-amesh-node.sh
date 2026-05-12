@@ -8,6 +8,7 @@ VERSION_TAG="${AMESH_VERSION_TAG:-}"
 AMESH_HOME="${AMESH_HOME:-$HOME/.local/share/amesh}"
 ACPX_PREFIX="${ACPX_PREFIX:-$AMESH_HOME/acpx}"
 ACPX_NPM_SPEC="${ACPX_NPM_SPEC:-acpx@latest}"
+ACPX_CONFIG_PATH="${ACPX_CONFIG_PATH:-$HOME/.acpx/config.json}"
 CONFIG_PATH="${CONFIG_PATH:-$HOME/.config/amesh/agents.json}"
 STATE_PATH="${STATE_PATH:-$HOME/.config/amesh/node-state.json}"
 BINARY_PATH="${BINARY_PATH:-}"
@@ -25,6 +26,73 @@ log() {
 fail() {
   log "error: $*"
   exit 1
+}
+
+ensure_acpx_config() {
+  config_path="$1"
+  mkdir -p "$(dirname "$config_path")"
+
+  node <<'EOF' "$config_path"
+const fs = require("fs");
+const path = process.argv[1];
+const valid = new Set(["deny", "fail"]);
+let config = {};
+let original = null;
+let needsWrite = false;
+let backupWritten = false;
+
+function writeBackup(contents) {
+  if (backupWritten) {
+    return;
+  }
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const backupPath = `${path}.amesh-backup-${stamp}`;
+  fs.writeFileSync(backupPath, contents);
+  console.warn(`[amesh] backed up existing ACPX config to ${backupPath}`);
+  backupWritten = true;
+}
+
+if (fs.existsSync(path)) {
+  original = fs.readFileSync(path, "utf8");
+  try {
+    config = JSON.parse(original);
+  } catch (error) {
+    writeBackup(original);
+    console.warn(`[amesh] ACPX config at ${path} is invalid JSON; rewriting a minimal compatible config: ${error.message}`);
+    needsWrite = true;
+  }
+}
+
+if (typeof config !== "object" || config === null || Array.isArray(config)) {
+  if (original !== null && !needsWrite) {
+    writeBackup(original);
+    console.warn(`[amesh] ACPX config at ${path} is not a JSON object; rewriting a minimal compatible config`);
+  }
+  config = {};
+  needsWrite = true;
+}
+
+if (!valid.has(config.nonInteractivePermissions)) {
+  if (original !== null) {
+    console.warn(
+      `[amesh] ACPX config at ${path} has unsupported nonInteractivePermissions=${JSON.stringify(config.nonInteractivePermissions)}; overriding to "deny"`
+    );
+  }
+  config.nonInteractivePermissions = "deny";
+  needsWrite = true;
+}
+
+if (!fs.existsSync(path)) {
+  needsWrite = true;
+}
+
+if (needsWrite) {
+  if (original !== null) {
+    writeBackup(original);
+  }
+  fs.writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
+}
+EOF
 }
 
 need_cmd() {
@@ -153,6 +221,8 @@ if [[ ! -x "$ACPX_BIN" ]]; then
 else
   log "managed acpx already present: ${ACPX_BIN}"
 fi
+
+ensure_acpx_config "$ACPX_CONFIG_PATH"
 
 if [[ ! -f "$CONFIG_PATH" ]]; then
   log "no node config found; running detect into ${CONFIG_PATH}"

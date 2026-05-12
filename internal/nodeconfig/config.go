@@ -57,6 +57,12 @@ func Load(path string) (File, error) {
 		if file.Agents[index].Args == nil {
 			file.Agents[index].Args = []string{}
 		}
+		if file.Agents[index].Env == nil {
+			file.Agents[index].Env = map[string]string{}
+		}
+		if file.Agents[index].Labels == nil {
+			file.Agents[index].Labels = []string{}
+		}
 	}
 	file.Paths = normalizePaths(file.Paths)
 
