@@ -143,7 +143,11 @@ beforeEach(() => {
       }
       if (parsed.pathname.endsWith("/api/sessions")) {
         if (init?.method === "POST") {
-          const payload = JSON.parse(String(init.body ?? "{}")) as { agentId?: string; prompt?: string };
+          const payload = JSON.parse(String(init.body ?? "{}")) as {
+            agentId?: string;
+            prompt?: string;
+            cwd?: string | null;
+          };
           const agent = topologyAgents.find((entry) => entry.id === payload.agentId);
           const view: TestSessionView = {
             session: {
@@ -152,7 +156,7 @@ beforeEach(() => {
               initiator: "user",
               status: "running",
               createdAt: "2026-05-12T10:00:00.000Z",
-              cwd: typeof agent?.capabilities.cwd === "string" ? agent.capabilities.cwd : null,
+              cwd: payload.cwd ?? (typeof agent?.capabilities.cwd === "string" ? agent.capabilities.cwd : null),
               parentSessionId: null,
               sourceAgentId: null
             },
@@ -375,9 +379,7 @@ describe("App shell", () => {
     fireEvent.click(screen.getByRole("button", { name: /save folders/i }));
 
     await waitFor(() => expect(pathRequests).toBe(1));
-    await waitFor(() =>
-      expect(screen.getByText(/exposed paths updated\. the node will refresh its workspace-scoped agents\./i)).toBeTruthy()
-    );
+    await waitFor(() => expect(screen.getByText(/exposed folders updated\./i)).toBeTruthy());
   });
 
   it("opens the node modal directly on the agents tab from an errored agent status button", async () => {
@@ -409,7 +411,7 @@ describe("App shell", () => {
     expect(screen.queryByRole("button", { name: /update lab-01/i })).toBeNull();
   });
 
-  it("lets the sessions rail switch folders between cwd-scoped variants", async () => {
+  it("lets the sessions rail switch between exposed folders on a node", async () => {
     topologyAgents = [
       {
         id: "agent-1",
@@ -418,23 +420,17 @@ describe("App shell", () => {
         backend: "acpx",
         status: "online",
         capabilities: {
-          acpxAgent: "planner",
-          cwd: "/srv/work/repo-a"
-        }
-      },
-      {
-        id: "agent-2",
-        nodeId: "node-1",
-        name: "Planner",
-        backend: "acpx",
-        status: "online",
-        capabilities: {
-          acpxAgent: "planner",
-          cwd: "/srv/work/repo-b"
+          acpxAgent: "planner"
         }
       }
     ];
-    window.history.pushState({}, "", "/sessions?agent=agent-1");
+    topologyNodes = [
+      {
+        ...topologyNodes[0]!,
+        paths: ["/srv/work/repo-a", "/srv/work/repo-b"]
+      }
+    ];
+    window.history.pushState({}, "", "/sessions?node=node-1&agent=agent-1");
     render(<App />);
 
     const select = (await screen.findByLabelText(/session folder/i)) as HTMLSelectElement;
@@ -456,13 +452,18 @@ describe("App shell", () => {
         backend: "acpx",
         status: "online",
         capabilities: {
-          acpxAgent: "planner",
-          cwd: "/srv/work/repo-a"
+          acpxAgent: "planner"
         }
       }
     ];
+    topologyNodes = [
+      {
+        ...topologyNodes[0]!,
+        paths: ["/srv/work/repo-a"]
+      }
+    ];
 
-    window.history.pushState({}, "", "/sessions?agent=agent-1");
+    window.history.pushState({}, "", "/sessions?node=node-1&agent=agent-1");
     render(<App />);
 
     await waitFor(() => expect(screen.getByText("Folder")).toBeTruthy());
@@ -478,20 +479,14 @@ describe("App shell", () => {
         backend: "acpx",
         status: "online",
         capabilities: {
-          acpxAgent: "planner",
-          cwd: "/srv/work/repo-a"
+          acpxAgent: "planner"
         }
-      },
+      }
+    ];
+    topologyNodes = [
       {
-        id: "agent-2",
-        nodeId: "node-1",
-        name: "Planner",
-        backend: "acpx",
-        status: "online",
-        capabilities: {
-          acpxAgent: "planner",
-          cwd: "/srv/work/repo-b"
-        }
+        ...topologyNodes[0]!,
+        paths: ["/srv/work/repo-a", "/srv/work/repo-b"]
       }
     ];
     sessionViews = {
@@ -511,7 +506,7 @@ describe("App shell", () => {
       "ses-b": {
         session: {
           id: "ses-b",
-          entryAgentId: "agent-2",
+          entryAgentId: "agent-1",
           initiator: "user",
           status: "completed",
           createdAt: "2026-05-12T08:00:00.000Z",
@@ -523,7 +518,7 @@ describe("App shell", () => {
       }
     };
 
-    window.history.pushState({}, "", "/sessions?agent=agent-1");
+    window.history.pushState({}, "", "/sessions?node=node-1&agent=agent-1");
     render(<App />);
 
     await waitFor(() => expect(screen.getAllByText("/srv/work/repo-a").length).toBeGreaterThan(0));
@@ -539,9 +534,14 @@ describe("App shell", () => {
         backend: "acpx",
         status: "online",
         capabilities: {
-          acpxAgent: "planner",
-          cwd: "/srv/work/repo-a"
+          acpxAgent: "planner"
         }
+      }
+    ];
+    topologyNodes = [
+      {
+        ...topologyNodes[0]!,
+        paths: ["/srv/work/repo-a"]
       }
     ];
     sessionViews = {
@@ -577,7 +577,7 @@ describe("App shell", () => {
     await waitFor(() => expect(screen.getAllByText("ses-old").length).toBeGreaterThan(0));
     fireEvent.click(screen.getByRole("button", { name: /^new$/i }));
 
-    await waitFor(() => expect(window.location.search).toContain("launchAgent=agent-1"));
+    await waitFor(() => expect(window.location.search).toContain("agent=agent-1"));
     await waitFor(() => expect(screen.getByText(/new session/i)).toBeTruthy());
     expect(screen.queryByText("existing thread")).toBeNull();
   });
@@ -591,8 +591,7 @@ describe("App shell", () => {
         backend: "acpx",
         status: "online",
         capabilities: {
-          acpxAgent: "planner",
-          cwd: "/srv/work/repo-a"
+          acpxAgent: "planner"
         }
       }
     ];
@@ -629,8 +628,7 @@ describe("App shell", () => {
         backend: "acpx",
         status: "online",
         capabilities: {
-          acpxAgent: "planner",
-          cwd: "/srv/work/repo-a"
+          acpxAgent: "planner"
         }
       },
       {
@@ -640,8 +638,7 @@ describe("App shell", () => {
         backend: "acpx",
         status: "online",
         capabilities: {
-          acpxAgent: "reviewer",
-          cwd: "/srv/work/repo-a"
+          acpxAgent: "reviewer"
         }
       }
     ];

@@ -6,5 +6,7 @@ dist
 apps/server/data
 apps/server/apps
 apps/server/.env
+.amesh-agents.json
 .amesh-node-state.json
+.amesh-backup-*
 .claude/settings.local.json

@@ -518,10 +518,8 @@ export function buildApp(options: AppOptions = {}) {
         agentId: payload.targetAgentId,
         prompt: payload.prompt,
         initiator: "agent",
-        metadata: {
-          ...(childSession.cwd ? { cwd: childSession.cwd } : {}),
-          parentSessionId: payload.parentSessionId
-        }
+        cwd: childSession.cwd,
+        parentSessionId: payload.parentSessionId
       })
     });
     void broadcastSession(payload.parentSessionId);
@@ -718,7 +716,22 @@ function registerApiRoutes({
       reply.code(404);
       return { message: "agent not found" };
     }
-    const cwd = typeof agent.capabilities.cwd === "string" ? agent.capabilities.cwd : null;
+    if (agent.nodeId !== body.nodeId) {
+      reply.code(400);
+      return { message: "agent does not belong to node" };
+    }
+    const requestedCwd = typeof body.cwd === "string" ? body.cwd.trim() : "";
+    const fixedCwd = typeof agent.capabilities.cwd === "string" ? agent.capabilities.cwd : null;
+    const cwd = requestedCwd || fixedCwd;
+    const node = repository.findNode(body.nodeId);
+    if (!node) {
+      reply.code(404);
+      return { message: "node not found" };
+    }
+    if (requestedCwd && requestedCwd !== fixedCwd && !node.paths.includes(requestedCwd)) {
+      reply.code(400);
+      return { message: "folder is not exposed on node" };
+    }
     const session = repository.createSession({
       entryAgentId: body.agentId,
       initiator: "user",
@@ -745,7 +758,8 @@ function registerApiRoutes({
         agentId: body.agentId,
         prompt: body.prompt,
         initiator: "user",
-        metadata: cwd ? { cwd } : {}
+        cwd,
+        parentSessionId: null
       })
     });
     await broadcastSession(session.id);

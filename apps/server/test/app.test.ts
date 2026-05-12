@@ -289,7 +289,9 @@ describe("server app", () => {
       method: "POST",
       url: "/api/sessions",
       payload: {
+        nodeId: "node-1",
         agentId: "agent-a",
+        cwd: null,
         prompt: "resume still works"
       }
     });
@@ -300,7 +302,7 @@ describe("server app", () => {
     resumedSocket.close();
   });
 
-  it("persists a session cwd and forwards it in session.start metadata", async () => {
+  it("persists a session cwd and forwards it in session.start", async () => {
     const socket = new WebSocket(`ws://${address}/ws?role=node&nodeId=node-1`);
     await waitForOpen(socket);
     socket.send(JSON.stringify(registerNode("node-1", "a")));
@@ -309,10 +311,9 @@ describe("server app", () => {
       JSON.stringify(
         syncCapabilities("node-1", [
           {
-            id: "agent-a--cwd-a",
+            id: "agent-a",
             name: "Claude",
-            acpxAgent: "claude",
-            cwd: "/srv/work/repo-a"
+            acpxAgent: "claude"
           }
         ])
       )
@@ -320,11 +321,23 @@ describe("server app", () => {
 
     await waitForIdle();
 
+    const paths = await injectAuthed(app, authCookie, {
+      method: "POST",
+      url: "/api/nodes/node-1/paths",
+      payload: {
+        paths: ["/srv/work/repo-a"]
+      }
+    });
+    expect(paths.statusCode).toBe(200);
+    await readNodeMessage(socket);
+
     const create = await injectAuthed(app, authCookie, {
       method: "POST",
       url: "/api/sessions",
       payload: {
-        agentId: "agent-a--cwd-a",
+        nodeId: "node-1",
+        agentId: "agent-a",
+        cwd: "/srv/work/repo-a",
         prompt: "work here"
       }
     });
@@ -333,9 +346,43 @@ describe("server app", () => {
 
     const startMessage = await readNodeMessage(socket);
     expect(startMessage.type).toBe("session.start");
-    expect((startMessage.payload as { metadata?: Record<string, unknown> }).metadata).toMatchObject({
-      cwd: "/srv/work/repo-a"
+    expect(startMessage.payload).toMatchObject({ cwd: "/srv/work/repo-a" });
+
+    socket.close();
+  });
+
+  it("rejects starting a session in an unexposed folder", async () => {
+    const socket = new WebSocket(`ws://${address}/ws?role=node&nodeId=node-1`);
+    await waitForOpen(socket);
+    socket.send(JSON.stringify(registerNode("node-1", "a")));
+    await readNodeMessage(socket);
+    socket.send(
+      JSON.stringify(syncCapabilities("node-1", [{ id: "agent-a", name: "Claude", acpxAgent: "claude" }]))
+    );
+    await waitForIdle();
+
+    const paths = await injectAuthed(app, authCookie, {
+      method: "POST",
+      url: "/api/nodes/node-1/paths",
+      payload: {
+        paths: ["/srv/work/repo-a"]
+      }
     });
+    expect(paths.statusCode).toBe(200);
+    await readNodeMessage(socket);
+
+    const create = await injectAuthed(app, authCookie, {
+      method: "POST",
+      url: "/api/sessions",
+      payload: {
+        nodeId: "node-1",
+        agentId: "agent-a",
+        cwd: "/srv/work/repo-b",
+        prompt: "work here"
+      }
+    });
+    expect(create.statusCode).toBe(400);
+    expect(create.json()).toEqual({ message: "folder is not exposed on node" });
 
     socket.close();
   });
@@ -362,7 +409,9 @@ describe("server app", () => {
       method: "POST",
       url: "/api/sessions",
       payload: {
+        nodeId: "node-1",
         agentId: "agent-a",
+        cwd: null,
         prompt: "hi"
       }
     });
@@ -442,7 +491,9 @@ describe("server app", () => {
       method: "POST",
       url: "/api/sessions",
       payload: {
+        nodeId: "node-1",
         agentId: "agent-a",
+        cwd: null,
         prompt: "start"
       }
     });
@@ -537,7 +588,9 @@ describe("server app", () => {
       method: "POST",
       url: "/api/sessions",
       payload: {
+        nodeId: "node-1",
         agentId: "agent-a",
+        cwd: null,
         prompt: "start"
       }
     });
@@ -581,7 +634,9 @@ describe("server app", () => {
         method: "POST",
         url: "/api/sessions",
         payload: {
+          nodeId: "node-1",
           agentId: "agent-a",
+          cwd: null,
           prompt: "hello"
         }
       });

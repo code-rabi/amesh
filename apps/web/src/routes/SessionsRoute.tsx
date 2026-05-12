@@ -1,6 +1,5 @@
 import { getRouteApi, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo } from "react";
-import type { AgentRecord } from "@amesh/protocol";
 
 import { AgentPicker } from "../components/AgentPicker.js";
 import { AssistantChat } from "../components/AssistantChat.js";
@@ -11,39 +10,27 @@ import { useTopology } from "../lib/topologyContext.js";
 
 const route = getRouteApi("/sessions");
 
-function readAgentCwd(agent: { capabilities: Record<string, unknown> }) {
-  return typeof agent.capabilities.cwd === "string" ? agent.capabilities.cwd : null;
+function readAgentCwd(agent: { capabilities: Record<string, unknown> } | null) {
+  return agent && typeof agent.capabilities.cwd === "string" ? agent.capabilities.cwd : null;
 }
 
 function readFolderLabel(folder: string | null) {
   return folder ?? "Default folder";
 }
 
-function collectNodeFolders(nodePaths: string[], agents: AgentRecord[]) {
+function collectNodeFolders(nodePaths: string[], agentCwds: string[]): Array<string | null> {
   const seen = new Set<string>();
   const folders: string[] = [];
 
-  for (const path of nodePaths) {
+  for (const path of [...nodePaths, ...agentCwds]) {
     const normalized = path.trim();
     if (!normalized || seen.has(normalized)) continue;
     seen.add(normalized);
     folders.push(normalized);
   }
 
-  let hasDefault = false;
-  for (const agent of agents) {
-    const cwd = readAgentCwd(agent)?.trim() ?? "";
-    if (!cwd) {
-      hasDefault = true;
-      continue;
-    }
-    if (seen.has(cwd)) continue;
-    seen.add(cwd);
-    folders.push(cwd);
-  }
-
   folders.sort((left, right) => left.localeCompare(right));
-  return hasDefault ? [null, ...folders] : folders.map((folder) => folder);
+  return folders.length > 0 ? folders : [null];
 }
 
 export function SessionsRoute() {
@@ -52,21 +39,12 @@ export function SessionsRoute() {
   const sessions = useSessions();
   const { topology } = useTopology();
 
-  const legacyAgentId = typeof search.agent === "string" ? search.agent : null;
+  const selectedSessionId = typeof search.session === "string" ? search.session : null;
   const focusedNodeId = typeof search.node === "string" ? search.node : null;
   const focusedFolder = typeof search.folder === "string" ? search.folder : null;
-  const launchAgentId = typeof search.launchAgent === "string" ? search.launchAgent : null;
-  const selectedSessionId = typeof search.session === "string" ? search.session : null;
-  const legacyAgent = useMemo(
-    () => topology.agents.find((agent) => agent.id === legacyAgentId) ?? null,
-    [legacyAgentId, topology.agents]
-  );
-  const agentsById = useMemo(
-    () => new Map(topology.agents.map((agent) => [agent.id, agent])),
-    [topology.agents]
-  );
+  const focusedAgentId = typeof search.agent === "string" ? search.agent : null;
+  const focusedAgent = topology.agents.find((agent) => agent.id === focusedAgentId) ?? null;
 
-  // Sync URL-driven selection into the store.
   useEffect(() => {
     if (selectedSessionId && sessions.selected?.session.id !== selectedSessionId) {
       void sessions.selectSession(selectedSessionId);
@@ -81,65 +59,67 @@ export function SessionsRoute() {
   const sessionEntryAgent = activeSession
     ? topology.agents.find((agent) => agent.id === activeSession.session.entryAgentId) ?? null
     : null;
-  const selectedNodeId =
-    sessionEntryAgent?.nodeId ?? focusedNodeId ?? legacyAgent?.nodeId ?? null;
+  const selectedNodeId = sessionEntryAgent?.nodeId ?? focusedNodeId ?? focusedAgent?.nodeId ?? null;
   const selectedNode = topology.nodes.find((node) => node.id === selectedNodeId) ?? null;
   const nodeAgents = useMemo(
     () => topology.agents.filter((agent) => agent.nodeId === selectedNodeId),
     [selectedNodeId, topology.agents]
   );
+  const agentCwds = useMemo(
+    () =>
+      nodeAgents
+        .map((agent) => readAgentCwd(agent))
+        .filter((cwd): cwd is string => Boolean(cwd)),
+    [nodeAgents]
+  );
   const availableFolders = useMemo(
-    () => (selectedNode ? collectNodeFolders(selectedNode.paths, nodeAgents) : []),
-    [nodeAgents, selectedNode]
+    () => (selectedNode ? collectNodeFolders(selectedNode.paths, agentCwds) : []),
+    [agentCwds, selectedNode]
   );
   const selectedFolder =
     activeSession?.session.cwd ??
-    readAgentCwd(sessionEntryAgent ?? legacyAgent ?? { capabilities: {} }) ??
     focusedFolder ??
+    readAgentCwd(sessionEntryAgent ?? focusedAgent) ??
     (availableFolders[0] ?? null);
-  const folderAgents = useMemo(
-    () =>
-      nodeAgents.filter((agent) => {
-        const cwd = readAgentCwd(agent) ?? null;
-        return cwd === selectedFolder;
-      }),
-    [nodeAgents, selectedFolder]
-  );
-  const selectedLaunchAgent =
+  const selectedAgent =
     sessionEntryAgent ??
-    folderAgents.find((agent) => agent.id === launchAgentId) ??
-    folderAgents.find((agent) => agent.id === legacyAgentId) ??
-    folderAgents.find((agent) => agent.status === "online") ??
-    folderAgents[0] ??
+    focusedAgent ??
+    nodeAgents.find((agent) => agent.status === "online") ??
+    nodeAgents[0] ??
     null;
-  const activeAgent = sessionEntryAgent ?? selectedLaunchAgent;
+  const activeAgent = sessionEntryAgent ?? selectedAgent;
   const currentFolderLabel = readFolderLabel(selectedFolder);
-  const visibleSessions = useMemo(() => {
-    if (!selectedNodeId) {
-      return sessions.summaries;
-    }
-    return sessions.summaries.filter(
-      (session) =>
-        agentsById.get(session.entryAgentId)?.nodeId === selectedNodeId &&
-        (session.cwd ?? null) === selectedFolder
-    );
-  }, [agentsById, selectedFolder, selectedNodeId, sessions.summaries]);
-  const folderOptions = useMemo(() => {
-    return availableFolders.map((folder) => ({
-      value: folder,
-      label: readFolderLabel(folder)
-    }));
-  }, [availableFolders]);
+  const folderOptions = useMemo(
+    () =>
+      availableFolders.map((folder) => ({
+        value: folder,
+        label: readFolderLabel(folder)
+      })),
+    [availableFolders]
+  );
   const agentNames = useMemo(
     () => new Map(topology.agents.map((agent) => [agent.id, agent.name])),
     [topology.agents]
   );
+  const agentsById = useMemo(
+    () => new Map(topology.agents.map((agent) => [agent.id, agent])),
+    [topology.agents]
+  );
+  const visibleSessions = useMemo(() => {
+    if (!selectedNodeId) {
+      return sessions.summaries;
+    }
+    return sessions.summaries.filter((session) => {
+      const agent = agentsById.get(session.entryAgentId);
+      return agent?.nodeId === selectedNodeId && (session.cwd ?? null) === selectedFolder;
+    });
+  }, [agentsById, selectedFolder, selectedNodeId, sessions.summaries]);
 
   function navigateToScope(input: {
     nodeId?: string | null;
     folder?: string | null;
     sessionId?: string | null;
-    launchAgent?: string | null;
+    agentId?: string | null;
   }) {
     void navigate({
       to: "/sessions",
@@ -147,14 +127,13 @@ export function SessionsRoute() {
         node: input.nodeId ?? undefined,
         folder: input.folder ?? undefined,
         session: input.sessionId ?? undefined,
-        launchAgent: input.launchAgent ?? undefined,
-        agent: undefined
+        agent: input.agentId ?? undefined
       }
     });
   }
 
   function navigateToSession(sessionId: string) {
-    navigateToScope({ sessionId, nodeId: undefined, folder: undefined, launchAgent: undefined });
+    navigateToScope({ sessionId, nodeId: undefined, folder: undefined, agentId: undefined });
   }
 
   return (
@@ -164,7 +143,7 @@ export function SessionsRoute() {
         selectedNodeId={selectedNodeId}
         onSelect={(nodeId) => {
           void sessions.selectSession(null);
-          navigateToScope({ nodeId, folder: undefined, sessionId: undefined, launchAgent: undefined });
+          navigateToScope({ nodeId, folder: undefined, sessionId: undefined, agentId: undefined });
         }}
       />
 
@@ -184,7 +163,7 @@ export function SessionsRoute() {
             nodeId: selectedNodeId,
             folder,
             sessionId: undefined,
-            launchAgent: undefined
+            agentId: selectedAgent?.id ?? null
           });
         }}
         onNew={() => {
@@ -193,7 +172,7 @@ export function SessionsRoute() {
             nodeId: selectedNodeId,
             folder: selectedFolder,
             sessionId: undefined,
-            launchAgent: selectedLaunchAgent?.id ?? null
+            agentId: selectedAgent?.id ?? null
           });
         }}
       />
@@ -209,7 +188,7 @@ export function SessionsRoute() {
           />
         ) : !activeAgent && !activeSession ? (
           <AgentPicker
-            agents={folderAgents}
+            agents={nodeAgents}
             nodeName={selectedNode?.name ?? null}
             folderLabel={currentFolderLabel}
             selectedAgentId={null}
@@ -218,7 +197,7 @@ export function SessionsRoute() {
                 nodeId: selectedNodeId,
                 folder: selectedFolder,
                 sessionId: undefined,
-                launchAgent: agentId
+                agentId
               })
             }
           />
@@ -228,16 +207,17 @@ export function SessionsRoute() {
             session={activeSession}
             activeAgent={activeAgent}
             topology={topology}
-            launchAgents={folderAgents}
+            launchAgents={nodeAgents}
             onSelectLaunchAgent={(agentId) =>
               navigateToScope({
                 nodeId: selectedNodeId,
                 folder: selectedFolder,
                 sessionId: undefined,
-                launchAgent: agentId
+                agentId
               })
             }
             scopeLabel={selectedNode ? `${selectedNode.name} · ${currentFolderLabel}` : currentFolderLabel}
+            sessionTarget={selectedNodeId ? { nodeId: selectedNodeId, cwd: selectedFolder } : null}
           />
         )}
       </main>

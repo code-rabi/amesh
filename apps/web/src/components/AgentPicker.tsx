@@ -31,15 +31,15 @@ export function AgentPicker({ agents, nodeName, folderLabel, selectedAgentId, on
         </div>
         <p>
           {nodeName
-            ? "Choose one of the exposed agents for this folder. Only online agents can start immediately."
-            : "Pick a node and folder to choose a launch target."}
+            ? "Choose one of the agents exposed by this node. Folder selection is separate."
+            : "Pick a node to choose a launch target."}
         </p>
       </header>
       {agents.length === 0 ? (
         <div className="agent-picker__empty">
           {nodeName
-            ? "No agents are exposed for this folder yet."
-            : "Pick a node and folder to start a session."}
+            ? "No agents are exposed by this node yet."
+            : "Pick a node to start a session."}
         </div>
       ) : (
         <ul className="agent-picker__list">

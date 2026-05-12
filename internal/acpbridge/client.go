@@ -25,6 +25,11 @@ type RemoteSession struct {
 	Events []RemoteEvent
 }
 
+type remoteAgent struct {
+	ID     string `json:"id"`
+	NodeID string `json:"nodeId"`
+}
+
 type meshClient interface {
 	StartSession(ctx context.Context, agentID string, prompt string) (RemoteSession, error)
 	ContinueSession(ctx context.Context, sessionID string, prompt string) (RemoteSession, error)
@@ -171,8 +176,14 @@ func (client *controlPlaneClient) Close() error {
 }
 
 func (client *controlPlaneClient) StartSession(ctx context.Context, agentID string, prompt string) (RemoteSession, error) {
-	return client.postSession(ctx, "/api/sessions", map[string]string{
+	agent, err := client.findAgent(ctx, agentID)
+	if err != nil {
+		return RemoteSession{}, err
+	}
+	return client.postSession(ctx, "/api/sessions", map[string]any{
+		"nodeId":  agent.NodeID,
 		"agentId": agentID,
+		"cwd":     nil,
 		"prompt":  prompt,
 	})
 }
@@ -181,6 +192,32 @@ func (client *controlPlaneClient) ContinueSession(ctx context.Context, sessionID
 	return client.postSession(ctx, "/api/sessions/"+sessionID+"/input", map[string]string{
 		"prompt": prompt,
 	})
+}
+
+func (client *controlPlaneClient) findAgent(ctx context.Context, agentID string) (remoteAgent, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+"/api/agents", http.NoBody)
+	if err != nil {
+		return remoteAgent{}, fmt.Errorf("build agents request: %w", err)
+	}
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return remoteAgent{}, fmt.Errorf("fetch agents: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return remoteAgent{}, fmt.Errorf("fetch agents failed with status %d", response.StatusCode)
+	}
+
+	var agents []remoteAgent
+	if err := json.NewDecoder(response.Body).Decode(&agents); err != nil {
+		return remoteAgent{}, fmt.Errorf("decode agents response: %w", err)
+	}
+	for _, agent := range agents {
+		if agent.ID == agentID {
+			return agent, nil
+		}
+	}
+	return remoteAgent{}, fmt.Errorf("remote agent %s not found", agentID)
 }
 
 func (client *controlPlaneClient) CancelSession(ctx context.Context, sessionID string) error {
@@ -230,7 +267,7 @@ func (client *controlPlaneClient) AcknowledgeSnapshot(sessionID string, eventCou
 	}
 }
 
-func (client *controlPlaneClient) postSession(ctx context.Context, path string, payload map[string]string) (RemoteSession, error) {
+func (client *controlPlaneClient) postSession(ctx context.Context, path string, payload any) (RemoteSession, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return RemoteSession{}, fmt.Errorf("encode session request: %w", err)

@@ -55,7 +55,7 @@ export function NodePathsButton({ node, agents, compact = false }: Props) {
     setMessage(null);
     try {
       await updateNodePaths(node.id, paths);
-      setMessage("Exposed paths updated. The node will refresh its workspace-scoped agents.");
+      setMessage("Exposed folders updated.");
       setOpen(false);
       refresh();
     } catch (error) {
@@ -79,7 +79,7 @@ export function NodePathsButton({ node, agents, compact = false }: Props) {
       {open ? (
         <div className="node-paths__panel" role="dialog" aria-label={`Manage exposed paths for ${node.name}`}>
           <p className="node-paths__copy">
-            Expose one directory per line. Each detected agent will be mirrored into a workspace-scoped variant for every path.
+            Expose one directory per line. Sessions can start any advertised agent in one of these folders.
           </p>
           <label className="node-paths__label" htmlFor={`node-paths-${node.id}`}>
             Exposed directories

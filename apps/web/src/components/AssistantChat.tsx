@@ -21,6 +21,7 @@ type Props = {
   launchAgents?: AgentRecord[];
   onSelectLaunchAgent?: (agentId: string) => void;
   scopeLabel?: string | null;
+  sessionTarget?: { nodeId: string; cwd: string | null } | null;
 };
 
 const ShowAcpContext = createContext(false);
@@ -31,9 +32,10 @@ export function AssistantChat({
   topology,
   launchAgents = [],
   onSelectLaunchAgent,
-  scopeLabel
+  scopeLabel,
+  sessionTarget = null
 }: Props) {
-  const { runtime, sendError, clearSendError } = useAmeshThreadRuntime(activeAgent);
+  const { runtime, sendError, clearSendError } = useAmeshThreadRuntime(activeAgent, sessionTarget);
   const [showAcp, setShowAcp] = useState(false);
 
   return (
@@ -225,7 +227,7 @@ function NewSessionIntro({
                 <AgentAvatar id={agent.id} name={agent.name} size={20} />
                 <span className="chat__agent-trigger-copy">
                   <span className="chat__agent-trigger-name">{agent.name}</span>
-                  <span className="chat__agent-trigger-meta">{launchAgents.length} available in this folder</span>
+                  <span className="chat__agent-trigger-meta">{launchAgents.length} available on this node</span>
                 </span>
               </span>
               <span className="chat__agent-trigger-caret" aria-hidden>

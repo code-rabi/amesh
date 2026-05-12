@@ -524,6 +524,7 @@ func startSession(
 	agents := configuredAgents(config)
 	agentID, _ := envelope.Payload["agentId"].(string)
 	prompt, _ := envelope.Payload["prompt"].(string)
+	requestedCWD, _ := envelope.Payload["cwd"].(string)
 	sessionID := deref(envelope.SessionID)
 
 	var target *nodeconfig.AgentConfig
@@ -537,6 +538,20 @@ func startSession(
 	if target == nil {
 		return fmt.Errorf("agent %s not found in local config", agentID)
 	}
+	if requested := strings.TrimSpace(requestedCWD); requested != "" {
+		allowed := requested == target.CWD
+		if !allowed {
+			for _, path := range config.Paths {
+				if path == requested {
+					allowed = true
+					break
+				}
+			}
+		}
+		if !allowed {
+			return fmt.Errorf("requested cwd %q is not exposed on this node", requested)
+		}
+	}
 
 	aggregatedPrompt, alreadyRunning := sessions.recordPrompt(sessionID, prompt)
 	if alreadyRunning {
@@ -547,12 +562,16 @@ func startSession(
 	sessions.setCancel(sessionID, cancel)
 	go func() {
 		defer sessions.clearRunning(sessionID)
+		workingDir := strings.TrimSpace(requestedCWD)
+		if workingDir == "" {
+			workingDir = target.CWD
+		}
 		_, err := runner.Run(runCtx, acpx.RunRequest{
 			Command:    target.Command,
 			Args:       target.Args,
 			Agent:      target.ACPXAgent,
 			Session:    sessionID,
-			WorkingDir: target.CWD,
+			WorkingDir: workingDir,
 			Env:        envList(target.Env),
 			Stdin:      aggregatedPrompt,
 		}, func(line string) {

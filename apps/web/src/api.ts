@@ -137,7 +137,12 @@ export async function deleteTriggerRule(id: string): Promise<void> {
   });
 }
 
-export async function createSession(input: { agentId: string; prompt: string }): Promise<SessionView> {
+export async function createSession(input: {
+  nodeId: string;
+  agentId: string;
+  cwd: string | null;
+  prompt: string;
+}): Promise<SessionView> {
   const response = await apiFetch("/api/sessions", {
     method: "POST",
     headers: { "content-type": "application/json" },

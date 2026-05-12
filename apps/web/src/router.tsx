@@ -40,7 +40,6 @@ type SessionsSearch = {
   agent?: string;
   node?: string;
   folder?: string;
-  launchAgent?: string;
 };
 
 const rootRoute = createRootRoute({ component: Shell });
@@ -58,8 +57,7 @@ const sessionsRoute = createRoute({
     session: typeof raw.session === "string" ? raw.session : undefined,
     agent: typeof raw.agent === "string" ? raw.agent : undefined,
     node: typeof raw.node === "string" ? raw.node : undefined,
-    folder: typeof raw.folder === "string" ? raw.folder : undefined,
-    launchAgent: typeof raw.launchAgent === "string" ? raw.launchAgent : undefined
+    folder: typeof raw.folder === "string" ? raw.folder : undefined
   }),
   component: SessionsRoute
 });

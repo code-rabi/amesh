@@ -303,6 +303,93 @@ func TestRunDaemonSessionHandlesNodePathUpdate(t *testing.T) {
 	assertEnvelopeTypes(t, client.sent, []string{"node.resume", "node.capabilities.sync", "node.capabilities.sync"})
 }
 
+func TestRunDaemonSessionHandlesNodePathBrowse(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "repo-a"), 0o755); err != nil {
+		t.Fatalf("mkdir repo-a: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "repo-b"), 0o755); err != nil {
+		t.Fatalf("mkdir repo-b: %v", err)
+	}
+	configPath := writeConfig(t, nodeconfig.File{NodeName: "node-a"})
+	client := &fakeDaemonClient{
+		readResults: []fakeReadResult{
+			{envelope: nodeclient.Envelope{Type: "node.resumed"}},
+			{
+				envelope: nodeclient.Envelope{
+					Type:      "node.paths.browse",
+					RequestID: "browse-1",
+					Payload: map[string]any{
+						"path": root,
+					},
+				},
+			},
+		},
+		blockReadsUntilCanceled: true,
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runDaemonSession(
+			ctx,
+			"ws://example.invalid/ws?role=node",
+			"node-a",
+			"token-a",
+			configPath,
+			acpx.Runner{},
+			newSessionStore(),
+			func(string) daemonClient { return client },
+			func(context.Context, nodeconfig.AgentConfig) error {
+				return nil
+			},
+			func(context.Context, io.Writer, io.Writer) error { return nil },
+			func(context.Context, string) error { return nil },
+		)
+	}()
+
+	waitForSends(t, client, 3)
+	cancel()
+	if err := <-errCh; err != nil {
+		t.Fatalf("runDaemonSession() error = %v", err)
+	}
+
+	var browseReply nodeclient.Envelope
+	for _, envelope := range client.sent {
+		if envelope.Type == "node.paths.browse.result" {
+			browseReply = envelope
+			break
+		}
+	}
+	if browseReply.Type == "" {
+		t.Fatal("expected node.paths.browse.result to be sent")
+	}
+	if browseReply.RequestID != "browse-1" {
+		t.Fatalf("browse reply request id = %q, want browse-1", browseReply.RequestID)
+	}
+	if browseReply.Payload["path"] != root {
+		t.Fatalf("browse path = %v, want %v", browseReply.Payload["path"], root)
+	}
+	rawEntries, ok := browseReply.Payload["entries"].([]map[string]any)
+	if ok {
+		if len(rawEntries) != 2 {
+			t.Fatalf("browse entry count = %d, want 2", len(rawEntries))
+		}
+		return
+	}
+	entries, ok := browseReply.Payload["entries"].([]any)
+	if !ok {
+		t.Fatalf("browse entries type = %T", browseReply.Payload["entries"])
+	}
+	if len(entries) != 2 {
+		t.Fatalf("browse entry count = %d, want 2", len(entries))
+	}
+}
+
 func TestConfiguredAgentsKeepsBaseAgentsUnchanged(t *testing.T) {
 	t.Parallel()
 

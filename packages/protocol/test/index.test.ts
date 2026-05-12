@@ -36,7 +36,8 @@ describe("protocol schema", () => {
       initiator: "user"
     });
 
-    expect(payload.metadata).toEqual({});
+    expect(payload.cwd).toBeNull();
+    expect(payload.parentSessionId).toBeNull();
   });
 
   it("defaults omitted session cwd to null", () => {

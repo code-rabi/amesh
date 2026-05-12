@@ -82,16 +82,13 @@ export function NodeCard({ data }: NodeCardProps) {
                     onClick={(event) => {
                       event.stopPropagation();
                       if (chatDisabled) return;
-                      const cwd =
-                        typeof agent.capabilities.cwd === "string" ? agent.capabilities.cwd : undefined;
                       void navigate({
                         to: "/sessions",
                         search: {
                           node: agent.nodeId,
-                          folder: cwd,
-                          launchAgent: agent.id,
+                          folder: undefined,
+                          agent: agent.id,
                           session: undefined,
-                          agent: undefined
                         }
                       });
                     }}

@@ -183,7 +183,7 @@ export function NodeSettingsButton({
     setMessage(null);
     try {
       await updateNodePaths(node.id, selectedPaths);
-      setMessage("Exposed paths updated. The node will refresh its workspace-scoped agents.");
+      setMessage("Exposed folders updated.");
       refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not update exposed paths.");
@@ -409,7 +409,7 @@ export function NodeSettingsButton({
                         <div>
                           <div className="node-settings__section-title">Advertised agents</div>
                           <p className="node-settings__copy">
-                            Start sessions directly from the agents currently exposed by this node, including folder-scoped variants.
+                            Start sessions directly from the agents currently exposed by this node.
                           </p>
                         </div>
                         <div className="node-settings__stat">{sortedAgents.length} agents</div>
@@ -458,9 +458,8 @@ export function NodeSettingsButton({
                                       search: {
                                         node: agent.nodeId,
                                         folder,
-                                        launchAgent: agent.id,
-                                        session: undefined,
-                                        agent: undefined
+                                        agent: agent.id,
+                                        session: undefined
                                       }
                                     });
                                   }}

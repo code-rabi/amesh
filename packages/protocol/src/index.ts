@@ -195,7 +195,8 @@ export const sessionStartPayloadSchema = z.object({
   agentId: z.string(),
   prompt: z.string(),
   initiator: sessionInitiatorSchema,
-  metadata: payloadSchema.default({})
+  cwd: z.string().nullable().default(null),
+  parentSessionId: z.string().nullable().default(null)
 });
 export type SessionStartPayload = z.infer<typeof sessionStartPayloadSchema>;
 
@@ -241,7 +242,9 @@ export const topologySnapshotSchema = z.object({
 export type TopologySnapshot = z.infer<typeof topologySnapshotSchema>;
 
 export const createSessionRequestSchema = z.object({
+  nodeId: z.string(),
   agentId: z.string(),
+  cwd: z.string().nullable().default(null),
   prompt: z.string()
 });
 export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;
