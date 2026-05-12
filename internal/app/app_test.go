@@ -502,8 +502,9 @@ func TestDefaultACPXCommandFallsBackToManagedInstall(t *testing.T) {
 func TestDetectAgentsFindsInstalledAgentsWithoutHealthProbe(t *testing.T) {
 	home := t.TempDir()
 	binDir := filepath.Join(t.TempDir(), "bin")
+	nodeDir := filepath.Join(t.TempDir(), "node-bin")
 	t.Setenv("HOME", home)
-	t.Setenv("PATH", binDir)
+	t.Setenv("PATH", strings.Join([]string{binDir, nodeDir}, string(os.PathListSeparator)))
 	t.Setenv("AMESH_ACPX_PATH", "")
 
 	managed := filepath.Join(home, ".local", "share", "amesh", "acpx", "bin", "acpx")
@@ -519,6 +520,7 @@ exit 0
 fi
 exit 1
 `)
+	writeExecutable(t, filepath.Join(nodeDir, "node"), "#!/bin/sh\nexit 0\n")
 	writeExecutable(t, filepath.Join(binDir, "codex"), "#!/bin/sh\nexit 0\n")
 	writeExecutable(t, filepath.Join(binDir, "claude"), "#!/bin/sh\nexit 0\n")
 
@@ -526,6 +528,7 @@ exit 1
 	slices.SortFunc(got, func(a, b nodeconfig.AgentConfig) int {
 		return strings.Compare(a.ID, b.ID)
 	})
+	pathEnv := strings.Join([]string{binDir, nodeDir}, string(os.PathListSeparator))
 	want := []nodeconfig.AgentConfig{
 		{
 			ID:        "agent-claude",
@@ -533,7 +536,7 @@ exit 1
 			ACPXAgent: "claude",
 			Command:   managed,
 			Args:      []string{},
-			Env:       map[string]string{},
+			Env:       map[string]string{"PATH": pathEnv},
 			Labels:    []string{"detected"},
 		},
 		{
@@ -542,7 +545,7 @@ exit 1
 			ACPXAgent: "codex",
 			Command:   managed,
 			Args:      []string{},
-			Env:       map[string]string{},
+			Env:       map[string]string{"PATH": pathEnv},
 			Labels:    []string{"detected"},
 		},
 	}
