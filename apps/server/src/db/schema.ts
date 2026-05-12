@@ -6,6 +6,7 @@ export const nodesTable = sqliteTable("nodes", {
   status: text("status").notNull(),
   host: text("host").notNull(),
   labels: text("labels").notNull(),
+  paths: text("paths").notNull().default("[]"),
   reconnectToken: text("reconnect_token").notNull(),
   registeredAt: text("registered_at").notNull(),
   lastSeenAt: text("last_seen_at")
@@ -35,6 +36,7 @@ export const sessionsTable = sqliteTable("sessions", {
   initiator: text("initiator").notNull(),
   status: text("status").notNull(),
   createdAt: text("created_at").notNull(),
+  cwd: text("cwd"),
   parentSessionId: text("parent_session_id"),
   sourceAgentId: text("source_agent_id")
 });

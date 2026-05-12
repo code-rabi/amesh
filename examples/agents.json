@@ -1,23 +1,68 @@
 {
   "nodeName": "demo-node",
+  "paths": [
+    "/home/nitayr/.agentjam"
+  ],
   "agents": [
     {
       "id": "agent-claude",
       "name": "Claude",
       "acpxAgent": "claude",
-      "labels": ["demo"]
+      "command": "/home/nitayr/.local/share/amesh/acpx/bin/acpx",
+      "args": null,
+      "labels": [
+        "detected"
+      ]
     },
     {
       "id": "agent-codex",
       "name": "Codex",
       "acpxAgent": "codex",
-      "labels": ["demo"]
+      "command": "/home/nitayr/.local/share/amesh/acpx/bin/acpx",
+      "args": null,
+      "labels": [
+        "detected"
+      ]
     },
     {
       "id": "agent-openclaw",
       "name": "OpenClaw",
       "acpxAgent": "openclaw",
-      "labels": ["demo"]
+      "command": "/home/nitayr/.local/share/amesh/acpx/bin/acpx",
+      "args": null,
+      "labels": [
+        "detected"
+      ]
+    },
+    {
+      "id": "agent-cursor",
+      "name": "Cursor",
+      "acpxAgent": "cursor",
+      "command": "/home/nitayr/.local/share/amesh/acpx/bin/acpx",
+      "args": null,
+      "labels": [
+        "detected"
+      ]
+    },
+    {
+      "id": "agent-copilot",
+      "name": "Copilot",
+      "acpxAgent": "copilot",
+      "command": "/home/nitayr/.local/share/amesh/acpx/bin/acpx",
+      "args": null,
+      "labels": [
+        "detected"
+      ]
+    },
+    {
+      "id": "agent-opencode",
+      "name": "OpenCode",
+      "acpxAgent": "opencode",
+      "command": "/home/nitayr/.local/share/amesh/acpx/bin/acpx",
+      "args": null,
+      "labels": [
+        "detected"
+      ]
     }
   ]
 }

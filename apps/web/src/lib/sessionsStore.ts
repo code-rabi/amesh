@@ -17,7 +17,12 @@ export type SessionsStore = {
   selected: SessionView | null;
   selectedLoading: boolean;
   selectSession: (id: string | null) => Promise<void>;
-  startSession: (agentId: string, prompt: string) => Promise<SessionView>;
+  startSession: (input: {
+    nodeId: string;
+    agentId: string;
+    cwd: string | null;
+    prompt: string;
+  }) => Promise<SessionView>;
   appendPrompt: (sessionId: string, prompt: string) => Promise<SessionView>;
   refresh: () => void;
 };
@@ -88,8 +93,13 @@ export function useSessionsStore(): SessionsStore {
     }
   }
 
-  async function startSession(agentId: string, prompt: string) {
-    const view = await createSession({ agentId, prompt });
+  async function startSession(input: {
+    nodeId: string;
+    agentId: string;
+    cwd: string | null;
+    prompt: string;
+  }) {
+    const view = await createSession(input);
     selectedIdRef.current = view.session.id;
     setSelected(view);
     setSummaries((current) => upsertSummary(current, view.session));

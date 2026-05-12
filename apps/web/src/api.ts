@@ -1,4 +1,10 @@
-import type { BrowserRealtimeEvent, TopologySnapshot, TriggerRule } from "@amesh/protocol";
+import type {
+  BrowserRealtimeEvent,
+  BrowseNodeDirectoriesResponse,
+  TopologySnapshot,
+  TriggerRule
+} from "@amesh/protocol";
+import { browseNodeDirectoriesResponseSchema } from "@amesh/protocol";
 
 import type { SessionSummary, SessionView } from "./types.js";
 
@@ -81,6 +87,37 @@ export async function requestNodeDetect(nodeId: string): Promise<void> {
   }
 }
 
+export async function updateNodePaths(nodeId: string, paths: string[]): Promise<void> {
+  const response = await apiFetch(`/api/nodes/${nodeId}/paths`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ paths })
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(body?.message ?? "Path update failed");
+  }
+}
+
+export async function fetchNodeDirectories(nodeId: string, path?: string): Promise<BrowseNodeDirectoriesResponse> {
+  const url = new URL(`${serverUrl().origin}/api/nodes/${nodeId}/directories`);
+  if (path) {
+    url.searchParams.set("path", path);
+  }
+  const response = await fetch(url, {
+    credentials: "include"
+  });
+  if (response.status === 401) {
+    window.dispatchEvent(new Event(unauthorizedEvent));
+    throw new ApiUnauthorizedError();
+  }
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(body?.message ?? "Directory browse failed");
+  }
+  return browseNodeDirectoriesResponseSchema.parse(await response.json());
+}
+
 export async function createTriggerRule(input: {
   sourceAgentId: string;
   targetAgentId: string;
@@ -100,7 +137,12 @@ export async function deleteTriggerRule(id: string): Promise<void> {
   });
 }
 
-export async function createSession(input: { agentId: string; prompt: string }): Promise<SessionView> {
+export async function createSession(input: {
+  nodeId: string;
+  agentId: string;
+  cwd: string | null;
+  prompt: string;
+}): Promise<SessionView> {
   const response = await apiFetch("/api/sessions", {
     method: "POST",
     headers: { "content-type": "application/json" },

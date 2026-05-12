@@ -6,6 +6,13 @@
 - Consequence: `pnpm --filter @amesh/server smoke` crashed before it could validate the MVP path, even though the rest of the JS test suite stayed green.
 - Mitigation: the smoke flow now logs in first, and the root `corepack pnpm check` gate includes smoke so GitHub Actions catches the same regression path.
 
+## Local daemon failed on stale ACPX user config
+
+- Date: 2026-05-12
+- Symptom: `pnpm dev:daemon` detected agents but their health probes failed immediately with `Invalid config nonInteractivePermissions in ~/.acpx/config.json: expected deny or fail`.
+- Cause: our bootstrap installed ACPX but did not validate or create the ACPX user config, so stale local values like `approve-all` in `nonInteractivePermissions` broke first-run non-interactive probes.
+- Mitigation: both `scripts/dev-daemon.sh` and `install-amesh-node.sh` now normalize `~/.acpx/config.json` before detect/register and force `nonInteractivePermissions` to a valid baseline when missing or invalid.
+
 ## 2026-05-11: Quality checks covered behavior better than structural drift
 
 - The repo had behavior checks, but nothing blocked merges for unused TypeScript surface area or repo-level architecture rule regressions.
@@ -18,6 +25,12 @@
 - Consequence: fresh nodes looked broken or permanently offline because the first advertised inventory was a placeholder and health probing immediately knocked those fake agents out.
 - Mitigation: the daemon now has a first-class `detect` command, uses detection as the default config bootstrap path, and the dashboard can trigger detection on an online node to refresh inventory in place.
 - Follow-up: detection now prefers the managed ACPX sidecar path automatically and records installed local agent CLIs before health filtering, so slow ACPX providers do not disappear from config generation.
+
+## 2026-05-12: Local dev daemon could stay pinned to example config through saved state
+
+- `pnpm dev:daemon` correctly defaulted to `.amesh-agents.json`, but an existing `.amesh-node-state.json` could still point at `examples/agents.json` and silently override that default on later runs.
+- Consequence: local development could keep mutating or reading the example config, and the dashboard would show stale demo inventory instead of the real detected local agents.
+- Mitigation: `scripts/dev-daemon.sh` now refuses `examples/agents.json` as the local dev config target and deletes stale local daemon state that still references the example config before re-detecting into `.amesh-agents.json`.
 
 ## 2026-05-11: Missing Go toolchain in local automation
 
@@ -45,3 +58,10 @@
 - The installer reported a completed install after writing the binary and service file, but it did not verify that the user service remained active or show enough detail about detect/register/state reuse.
 - Consequence: a host could look "installed" locally while the dashboard stayed empty and there was no immediate clue whether detection, registration, or service startup had failed.
 - Mitigation: the installer now logs each detect/register decision, fails fast if the systemd user service does not stay active, and prints service status plus recent journal lines. The daemon also logs detect, register, resume, and capability-sync milestones to stderr.
+
+## 2026-05-11: Node inventory had no lightweight way to express multiple working directories
+
+- The node config only described base agents, so a single machine could not advertise the same local agent across multiple useful workspaces without hand-editing duplicate agent entries.
+- Consequence: CWD management was brittle and there was no simple admin flow to expose extra repositories on a node before a fuller project model existed.
+- Follow-up: the first implementation expanded those folders into fake per-folder agents, which blurred the model and polluted topology.
+- Current mitigation: node config still has a top-level `paths` list, but those paths are now exposed session folders on the node. Agents stay as base inventory, and sessions carry `cwd` explicitly.

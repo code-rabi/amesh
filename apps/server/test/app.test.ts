@@ -289,7 +289,9 @@ describe("server app", () => {
       method: "POST",
       url: "/api/sessions",
       payload: {
+        nodeId: "node-1",
         agentId: "agent-a",
+        cwd: null,
         prompt: "resume still works"
       }
     });
@@ -298,6 +300,91 @@ describe("server app", () => {
     const startMessage = await readNodeMessage(resumedSocket);
     expect(startMessage.type).toBe("session.start");
     resumedSocket.close();
+  });
+
+  it("persists a session cwd and forwards it in session.start", async () => {
+    const socket = new WebSocket(`ws://${address}/ws?role=node&nodeId=node-1`);
+    await waitForOpen(socket);
+    socket.send(JSON.stringify(registerNode("node-1", "a")));
+    await readNodeMessage(socket);
+    socket.send(
+      JSON.stringify(
+        syncCapabilities("node-1", [
+          {
+            id: "agent-a",
+            name: "Claude",
+            acpxAgent: "claude"
+          }
+        ])
+      )
+    );
+
+    await waitForIdle();
+
+    const paths = await injectAuthed(app, authCookie, {
+      method: "POST",
+      url: "/api/nodes/node-1/paths",
+      payload: {
+        paths: ["/srv/work/repo-a"]
+      }
+    });
+    expect(paths.statusCode).toBe(200);
+    await readNodeMessage(socket);
+
+    const create = await injectAuthed(app, authCookie, {
+      method: "POST",
+      url: "/api/sessions",
+      payload: {
+        nodeId: "node-1",
+        agentId: "agent-a",
+        cwd: "/srv/work/repo-a",
+        prompt: "work here"
+      }
+    });
+    expect(create.statusCode).toBe(200);
+    expect(create.json().session.cwd).toBe("/srv/work/repo-a");
+
+    const startMessage = await readNodeMessage(socket);
+    expect(startMessage.type).toBe("session.start");
+    expect(startMessage.payload).toMatchObject({ cwd: "/srv/work/repo-a" });
+
+    socket.close();
+  });
+
+  it("rejects starting a session in an unexposed folder", async () => {
+    const socket = new WebSocket(`ws://${address}/ws?role=node&nodeId=node-1`);
+    await waitForOpen(socket);
+    socket.send(JSON.stringify(registerNode("node-1", "a")));
+    await readNodeMessage(socket);
+    socket.send(
+      JSON.stringify(syncCapabilities("node-1", [{ id: "agent-a", name: "Claude", acpxAgent: "claude" }]))
+    );
+    await waitForIdle();
+
+    const paths = await injectAuthed(app, authCookie, {
+      method: "POST",
+      url: "/api/nodes/node-1/paths",
+      payload: {
+        paths: ["/srv/work/repo-a"]
+      }
+    });
+    expect(paths.statusCode).toBe(200);
+    await readNodeMessage(socket);
+
+    const create = await injectAuthed(app, authCookie, {
+      method: "POST",
+      url: "/api/sessions",
+      payload: {
+        nodeId: "node-1",
+        agentId: "agent-a",
+        cwd: "/srv/work/repo-b",
+        prompt: "work here"
+      }
+    });
+    expect(create.statusCode).toBe(400);
+    expect(create.json()).toEqual({ message: "folder is not exposed on node" });
+
+    socket.close();
   });
 
   it("blocks cross-agent invocation without an allow rule and emits audit state", async () => {
@@ -322,7 +409,9 @@ describe("server app", () => {
       method: "POST",
       url: "/api/sessions",
       payload: {
+        nodeId: "node-1",
         agentId: "agent-a",
+        cwd: null,
         prompt: "hi"
       }
     });
@@ -402,7 +491,9 @@ describe("server app", () => {
       method: "POST",
       url: "/api/sessions",
       payload: {
+        nodeId: "node-1",
         agentId: "agent-a",
+        cwd: null,
         prompt: "start"
       }
     });
@@ -497,7 +588,9 @@ describe("server app", () => {
       method: "POST",
       url: "/api/sessions",
       payload: {
+        nodeId: "node-1",
         agentId: "agent-a",
+        cwd: null,
         prompt: "start"
       }
     });
@@ -541,7 +634,9 @@ describe("server app", () => {
         method: "POST",
         url: "/api/sessions",
         payload: {
+          nodeId: "node-1",
           agentId: "agent-a",
+          cwd: null,
           prompt: "hello"
         }
       });
@@ -737,6 +832,113 @@ describe("server app", () => {
     socket.close();
   });
 
+  it("sends an exposed-path update command to an online node through the admin API", async () => {
+    const socket = new WebSocket(`ws://${address}/ws?role=node&nodeId=node-1`);
+    await waitForOpen(socket);
+    socket.send(JSON.stringify(registerNode("node-1", "a")));
+    await readNodeMessage(socket);
+    socket.send(
+      JSON.stringify(syncCapabilities("node-1", [{ id: "agent-a", name: "A", acpxAgent: "a" }]))
+    );
+    await waitForIdle();
+
+    const response = await injectAuthed(app, authCookie, {
+      method: "POST",
+      url: "/api/nodes/node-1/paths",
+      payload: {
+        paths: ["/srv/work/repo-a", "/srv/work/repo-b"]
+      }
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ ok: true });
+
+    const pathMessage = await readNodeMessage(socket);
+    expect(pathMessage).toMatchObject({
+      type: "node.paths.update",
+      source: "server",
+      target: "node-1",
+      payload: {
+        nodeId: "node-1",
+        paths: ["/srv/work/repo-a", "/srv/work/repo-b"]
+      }
+    });
+
+    const topology = await injectAuthed(app, authCookie, {
+      method: "GET",
+      url: "/api/topology"
+    });
+    expect(topology.statusCode).toBe(200);
+    expect(topology.json().nodes).toEqual([
+      expect.objectContaining({
+        id: "node-1",
+        paths: ["/srv/work/repo-a", "/srv/work/repo-b"]
+      })
+    ]);
+    socket.close();
+  });
+
+  it("requests directories from an online node through the admin API", async () => {
+    const socket = new WebSocket(`ws://${address}/ws?role=node&nodeId=node-1`);
+    await waitForOpen(socket);
+    socket.send(JSON.stringify(registerNode("node-1", "a")));
+    await readNodeMessage(socket);
+    socket.send(
+      JSON.stringify(syncCapabilities("node-1", [{ id: "agent-a", name: "A", acpxAgent: "a" }]))
+    );
+    await waitForIdle();
+
+    const responsePromise = injectAuthed(app, authCookie, {
+      method: "GET",
+      url: "/api/nodes/node-1/directories?path=%2Fsrv%2Fwork"
+    });
+
+    const browseMessage = await readNodeMessage(socket);
+    expect(browseMessage).toMatchObject({
+      type: "node.paths.browse",
+      source: "server",
+      target: "node-1",
+      payload: {
+        nodeId: "node-1",
+        path: "/srv/work"
+      }
+    });
+
+    socket.send(
+      JSON.stringify({
+        type: "node.paths.browse.result",
+        requestId: browseMessage.requestId,
+        sessionId: null,
+        source: "node-1",
+        target: "server",
+        payload: {
+          nodeId: "node-1",
+          path: "/srv/work",
+          entries: [
+            {
+              name: "repo-a",
+              path: "/srv/work/repo-a",
+              hasChildren: true
+            }
+          ]
+        }
+      })
+    );
+
+    const response = await responsePromise;
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      path: "/srv/work",
+      entries: [
+        {
+          name: "repo-a",
+          path: "/srv/work/repo-a",
+          hasChildren: true
+        }
+      ]
+    });
+    socket.close();
+  });
+
   it("rejects update commands for offline nodes", async () => {
     const socket = new WebSocket(`ws://${address}/ws?role=node&nodeId=node-1`);
     await waitForOpen(socket);
@@ -772,6 +974,27 @@ describe("server app", () => {
       message: "node must be online to detect agents"
     });
   });
+
+  it("rejects exposed-path updates for offline nodes", async () => {
+    const socket = new WebSocket(`ws://${address}/ws?role=node&nodeId=node-1`);
+    await waitForOpen(socket);
+    socket.send(JSON.stringify(registerNode("node-1", "a")));
+    await readNodeMessage(socket);
+    socket.close();
+    await waitForIdle();
+
+    const response = await injectAuthed(app, authCookie, {
+      method: "POST",
+      url: "/api/nodes/node-1/paths",
+      payload: {
+        paths: ["/srv/work/repo-a"]
+      }
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({
+      message: "node must be online to update exposed paths"
+    });
+  });
 });
 
 function registerNode(nodeId: string, name: string, version: string | null = null) {
@@ -791,7 +1014,10 @@ function registerNode(nodeId: string, name: string, version: string | null = nul
   };
 }
 
-function syncCapabilities(nodeId: string, capabilities: Array<{ id: string; name: string; acpxAgent: string }>) {
+function syncCapabilities(
+  nodeId: string,
+  capabilities: Array<{ id: string; name: string; acpxAgent: string; cwd?: string }>
+) {
   return {
     type: "node.capabilities.sync",
     requestId: `caps-${nodeId}`,

@@ -75,8 +75,8 @@ func TestRunDaemonLoopReconnectsAfterDisconnect(t *testing.T) {
 				next++
 				return client
 			},
-			func(context.Context, nodeconfig.AgentConfig) bool {
-				return true
+			func(context.Context, nodeconfig.AgentConfig) error {
+				return nil
 			},
 			func(ctx context.Context, delay time.Duration) error {
 				mu.Lock()
@@ -179,7 +179,7 @@ func TestRunDaemonSessionHandlesNodeUpdate(t *testing.T) {
 		acpx.Runner{},
 		newSessionStore(),
 		func(string) daemonClient { return client },
-		func(context.Context, nodeconfig.AgentConfig) bool { return true },
+		func(context.Context, nodeconfig.AgentConfig) error { return nil },
 		func(context.Context, io.Writer, io.Writer) error {
 			called = true
 			return nil
@@ -227,7 +227,7 @@ func TestRunDaemonSessionHandlesNodeDetect(t *testing.T) {
 		acpx.Runner{},
 		newSessionStore(),
 		func(string) daemonClient { return client },
-		func(context.Context, nodeconfig.AgentConfig) bool { return true },
+		func(context.Context, nodeconfig.AgentConfig) error { return nil },
 		func(context.Context, io.Writer, io.Writer) error { return nil },
 		func(_ context.Context, path string) error {
 			called = true
@@ -244,7 +244,177 @@ func TestRunDaemonSessionHandlesNodeDetect(t *testing.T) {
 	assertEnvelopeTypes(t, client.sent, []string{"node.resume", "node.capabilities.sync", "node.capabilities.sync"})
 }
 
-func TestFilterHealthyAgents(t *testing.T) {
+func TestRunDaemonSessionHandlesNodePathUpdate(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	rootA := t.TempDir()
+	rootB := t.TempDir()
+	configPath := writeConfig(t, nodeconfig.File{
+		NodeName: "node-a",
+		Agents: []nodeconfig.AgentConfig{
+			{ID: "agent-a", Name: "Agent A", ACPXAgent: "claude", Command: "/bin/acpx"},
+		},
+	})
+	client := &fakeDaemonClient{
+		readResults: []fakeReadResult{
+			{envelope: nodeclient.Envelope{Type: "node.resumed"}},
+			{
+				envelope: nodeclient.Envelope{
+					Type: "node.paths.update",
+					Payload: map[string]any{
+						"paths": []any{rootA, rootB},
+					},
+				},
+			},
+		},
+		blockReadsUntilCanceled: true,
+	}
+
+	err := runDaemonSession(
+		ctx,
+		"ws://example.invalid/ws?role=node",
+		"node-a",
+		"token-a",
+		configPath,
+		acpx.Runner{},
+		newSessionStore(),
+		func(string) daemonClient { return client },
+		func(context.Context, nodeconfig.AgentConfig) error {
+			cancel()
+			return nil
+		},
+		func(context.Context, io.Writer, io.Writer) error { return nil },
+		func(context.Context, string) error { return nil },
+	)
+	if err != nil {
+		t.Fatalf("runDaemonSession() error = %v", err)
+	}
+
+	config, err := nodeconfig.Load(configPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if !slices.Equal(config.Paths, []string{rootA, rootB}) {
+		t.Fatalf("config paths = %v, want %v", config.Paths, []string{rootA, rootB})
+	}
+	assertEnvelopeTypes(t, client.sent, []string{"node.resume", "node.capabilities.sync", "node.capabilities.sync"})
+}
+
+func TestRunDaemonSessionHandlesNodePathBrowse(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "repo-a"), 0o755); err != nil {
+		t.Fatalf("mkdir repo-a: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "repo-b"), 0o755); err != nil {
+		t.Fatalf("mkdir repo-b: %v", err)
+	}
+	configPath := writeConfig(t, nodeconfig.File{NodeName: "node-a"})
+	client := &fakeDaemonClient{
+		readResults: []fakeReadResult{
+			{envelope: nodeclient.Envelope{Type: "node.resumed"}},
+			{
+				envelope: nodeclient.Envelope{
+					Type:      "node.paths.browse",
+					RequestID: "browse-1",
+					Payload: map[string]any{
+						"path": root,
+					},
+				},
+			},
+		},
+		blockReadsUntilCanceled: true,
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runDaemonSession(
+			ctx,
+			"ws://example.invalid/ws?role=node",
+			"node-a",
+			"token-a",
+			configPath,
+			acpx.Runner{},
+			newSessionStore(),
+			func(string) daemonClient { return client },
+			func(context.Context, nodeconfig.AgentConfig) error {
+				return nil
+			},
+			func(context.Context, io.Writer, io.Writer) error { return nil },
+			func(context.Context, string) error { return nil },
+		)
+	}()
+
+	waitForSends(t, client, 3)
+	cancel()
+	if err := <-errCh; err != nil {
+		t.Fatalf("runDaemonSession() error = %v", err)
+	}
+
+	var browseReply nodeclient.Envelope
+	for _, envelope := range client.sent {
+		if envelope.Type == "node.paths.browse.result" {
+			browseReply = envelope
+			break
+		}
+	}
+	if browseReply.Type == "" {
+		t.Fatal("expected node.paths.browse.result to be sent")
+	}
+	if browseReply.RequestID != "browse-1" {
+		t.Fatalf("browse reply request id = %q, want browse-1", browseReply.RequestID)
+	}
+	if browseReply.Payload["path"] != root {
+		t.Fatalf("browse path = %v, want %v", browseReply.Payload["path"], root)
+	}
+	rawEntries, ok := browseReply.Payload["entries"].([]map[string]any)
+	if ok {
+		if len(rawEntries) != 2 {
+			t.Fatalf("browse entry count = %d, want 2", len(rawEntries))
+		}
+		return
+	}
+	entries, ok := browseReply.Payload["entries"].([]any)
+	if !ok {
+		t.Fatalf("browse entries type = %T", browseReply.Payload["entries"])
+	}
+	if len(entries) != 2 {
+		t.Fatalf("browse entry count = %d, want 2", len(entries))
+	}
+}
+
+func TestConfiguredAgentsKeepsBaseAgentsUnchanged(t *testing.T) {
+	t.Parallel()
+
+	got := configuredAgents(nodeconfig.File{
+		NodeName: "node-a",
+		Paths:    []string{"/work/repo-a", "/work/repo-b"},
+		Agents: []nodeconfig.AgentConfig{
+			{ID: "agent-codex", Name: "Codex", ACPXAgent: "codex", Command: "/bin/acpx"},
+		},
+	})
+
+	want := []nodeconfig.AgentConfig{
+		{
+			ID:        "agent-codex",
+			Name:      "Codex",
+			ACPXAgent: "codex",
+			Command:   "/bin/acpx",
+		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("configuredAgents() = %#v, want %#v", got, want)
+	}
+}
+
+func TestCapabilitiesWithStatus(t *testing.T) {
 	t.Parallel()
 
 	agents := []nodeconfig.AgentConfig{
@@ -252,12 +422,21 @@ func TestFilterHealthyAgents(t *testing.T) {
 		{ID: "down", Name: "Down", ACPXAgent: "down"},
 	}
 
-	got := filterHealthyAgents(context.Background(), agents, func(_ context.Context, agent nodeconfig.AgentConfig) bool {
-		return agent.ID != "down"
+	got := capabilitiesWithStatus(context.Background(), agents, func(_ context.Context, agent nodeconfig.AgentConfig) error {
+		if agent.ID == "down" {
+			return errors.New("missing auth")
+		}
+		return nil
 	})
 
-	if len(got) != 1 || got[0].ID != "healthy" {
-		t.Fatalf("filterHealthyAgents() = %#v, want only healthy agent", got)
+	if len(got) != 2 {
+		t.Fatalf("capabilitiesWithStatus() len = %d, want 2", len(got))
+	}
+	if got[0]["status"] != "online" || got[1]["status"] != "error" {
+		t.Fatalf("capabilitiesWithStatus() = %#v, want online/error statuses", got)
+	}
+	if got[1]["error"] != "missing auth" {
+		t.Fatalf("capabilitiesWithStatus() error = %#v, want missing auth", got[1]["error"])
 	}
 }
 
@@ -353,6 +532,8 @@ exit 1
 			Name:      "Claude",
 			ACPXAgent: "claude",
 			Command:   managed,
+			Args:      []string{},
+			Env:       map[string]string{},
 			Labels:    []string{"detected"},
 		},
 		{
@@ -360,6 +541,8 @@ exit 1
 			Name:      "Codex",
 			ACPXAgent: "codex",
 			Command:   managed,
+			Args:      []string{},
+			Env:       map[string]string{},
 			Labels:    []string{"detected"},
 		},
 	}

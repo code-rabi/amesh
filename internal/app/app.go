@@ -7,12 +7,14 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime/debug"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -37,7 +39,7 @@ type daemonClientFactory func(serverURL string) daemonClient
 
 type sleeper func(ctx context.Context, delay time.Duration) error
 
-type capabilityProber func(ctx context.Context, agent nodeconfig.AgentConfig) bool
+type capabilityProber func(ctx context.Context, agent nodeconfig.AgentConfig) error
 
 type updateRunner func(ctx context.Context, stdout, stderr io.Writer) error
 type detectRunner func(ctx context.Context, configPath string) error
@@ -201,14 +203,17 @@ func defaultACPXCommand() string {
 
 func runDetect(ctx context.Context, configPath string) error {
 	nodeName := hostname()
+	paths := []string{}
 	if existing, err := nodeconfig.Load(configPath); err == nil && strings.TrimSpace(existing.NodeName) != "" {
 		nodeName = existing.NodeName
+		paths = existing.Paths
 	}
 
 	logf("detect start config=%s node=%s acpx=%s", configPath, nodeName, defaultACPXCommand())
 	detected := detectAgents(ctx, acpx.Runner{})
 	config := nodeconfig.File{
 		NodeName: nodeName,
+		Paths:    paths,
 		Agents:   detected,
 	}
 	if err := nodeconfig.Save(configPath, config); err != nil {
@@ -250,6 +255,8 @@ func detectAgents(ctx context.Context, runner acpx.Runner) []nodeconfig.AgentCon
 			Name:      candidate.Name,
 			ACPXAgent: candidate.ACPXAgent,
 			Command:   defaultACPXCommand(),
+			Args:      []string{},
+			Env:       map[string]string{},
 			Labels:    []string{"detected"},
 		}
 		agents = append(agents, agent)
@@ -265,6 +272,30 @@ func detectInstalledAgents(candidates []detectableAgent) []detectableAgent {
 		}
 	}
 	return detected
+}
+
+func configuredAgents(config nodeconfig.File) []nodeconfig.AgentConfig {
+	return append([]nodeconfig.AgentConfig(nil), config.Agents...)
+}
+
+func appendUniqueLabels(labels []string, extra ...string) []string {
+	seen := make(map[string]struct{}, len(labels)+len(extra))
+	merged := make([]string, 0, len(labels)+len(extra))
+	for _, label := range labels {
+		if _, ok := seen[label]; ok {
+			continue
+		}
+		seen[label] = struct{}{}
+		merged = append(merged, label)
+	}
+	for _, label := range extra {
+		if _, ok := seen[label]; ok {
+			continue
+		}
+		seen[label] = struct{}{}
+		merged = append(merged, label)
+	}
+	return merged
 }
 
 func detectableAgentsFromACPXHelp(ctx context.Context, command string) ([]detectableAgent, error) {
@@ -490,12 +521,14 @@ func startSession(
 	if err != nil {
 		return fmt.Errorf("load config %s: %w", configPath, err)
 	}
+	agents := configuredAgents(config)
 	agentID, _ := envelope.Payload["agentId"].(string)
 	prompt, _ := envelope.Payload["prompt"].(string)
+	requestedCWD, _ := envelope.Payload["cwd"].(string)
 	sessionID := deref(envelope.SessionID)
 
 	var target *nodeconfig.AgentConfig
-	for _, candidate := range config.Agents {
+	for _, candidate := range agents {
 		if candidate.ID == agentID {
 			candidate := candidate
 			target = &candidate
@@ -504,6 +537,20 @@ func startSession(
 	}
 	if target == nil {
 		return fmt.Errorf("agent %s not found in local config", agentID)
+	}
+	if requested := strings.TrimSpace(requestedCWD); requested != "" {
+		allowed := requested == target.CWD
+		if !allowed {
+			for _, path := range config.Paths {
+				if path == requested {
+					allowed = true
+					break
+				}
+			}
+		}
+		if !allowed {
+			return fmt.Errorf("requested cwd %q is not exposed on this node", requested)
+		}
 	}
 
 	aggregatedPrompt, alreadyRunning := sessions.recordPrompt(sessionID, prompt)
@@ -515,12 +562,16 @@ func startSession(
 	sessions.setCancel(sessionID, cancel)
 	go func() {
 		defer sessions.clearRunning(sessionID)
+		workingDir := strings.TrimSpace(requestedCWD)
+		if workingDir == "" {
+			workingDir = target.CWD
+		}
 		_, err := runner.Run(runCtx, acpx.RunRequest{
 			Command:    target.Command,
 			Args:       target.Args,
 			Agent:      target.ACPXAgent,
 			Session:    sessionID,
-			WorkingDir: target.CWD,
+			WorkingDir: workingDir,
 			Env:        envList(target.Env),
 			Stdin:      aggregatedPrompt,
 		}, func(line string) {
@@ -547,6 +598,155 @@ func startSession(
 	}()
 
 	return nil
+}
+
+func updateConfigPaths(configPath string, paths []string) error {
+	config, err := nodeconfig.Load(configPath)
+	if err != nil {
+		return fmt.Errorf("load config %s: %w", configPath, err)
+	}
+
+	resolved, err := resolveExposedPaths(paths)
+	if err != nil {
+		return err
+	}
+	config.Paths = resolved
+	if err := nodeconfig.Save(configPath, config); err != nil {
+		return err
+	}
+	return nil
+}
+
+func resolveExposedPaths(paths []string) ([]string, error) {
+	if len(paths) == 0 {
+		return []string{}, nil
+	}
+
+	seen := make(map[string]struct{}, len(paths))
+	resolved := make([]string, 0, len(paths))
+	for _, raw := range paths {
+		path := strings.TrimSpace(raw)
+		if path == "" {
+			continue
+		}
+		absolute, err := filepath.Abs(path)
+		if err != nil {
+			return nil, fmt.Errorf("resolve path %q: %w", path, err)
+		}
+		info, err := os.Stat(absolute)
+		if err != nil {
+			return nil, fmt.Errorf("stat path %q: %w", absolute, err)
+		}
+		if !info.IsDir() {
+			return nil, fmt.Errorf("path %q is not a directory", absolute)
+		}
+		if _, ok := seen[absolute]; ok {
+			continue
+		}
+		seen[absolute] = struct{}{}
+		resolved = append(resolved, absolute)
+	}
+	return resolved, nil
+}
+
+type directoryEntry struct {
+	Name        string `json:"name"`
+	Path        string `json:"path"`
+	HasChildren bool   `json:"hasChildren"`
+}
+
+func browseDirectories(configPath string, requestedPath string) (string, []map[string]any, error) {
+	root, err := resolveBrowseRoot(configPath, requestedPath)
+	if err != nil {
+		return "", nil, err
+	}
+
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return "", nil, fmt.Errorf("read directory %q: %w", root, err)
+	}
+
+	children := make([]directoryEntry, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		childPath := filepath.Join(root, entry.Name())
+		hasChildren, err := directoryHasChildren(childPath)
+		if err != nil {
+			return "", nil, err
+		}
+		children = append(children, directoryEntry{
+			Name:        entry.Name(),
+			Path:        childPath,
+			HasChildren: hasChildren,
+		})
+	}
+	sort.Slice(children, func(i, j int) bool {
+		return strings.ToLower(children[i].Name) < strings.ToLower(children[j].Name)
+	})
+
+	payload := make([]map[string]any, 0, len(children))
+	for _, child := range children {
+		raw, err := json.Marshal(child)
+		if err != nil {
+			return "", nil, fmt.Errorf("encode directory entry: %w", err)
+		}
+		var parsed map[string]any
+		if err := json.Unmarshal(raw, &parsed); err != nil {
+			return "", nil, fmt.Errorf("decode directory entry: %w", err)
+		}
+		payload = append(payload, parsed)
+	}
+	return root, payload, nil
+}
+
+func resolveBrowseRoot(configPath string, requestedPath string) (string, error) {
+	path := strings.TrimSpace(requestedPath)
+	if path == "" {
+		config, err := nodeconfig.Load(configPath)
+		if err == nil && len(config.Paths) > 0 {
+			parent := filepath.Dir(config.Paths[0])
+			if parent != "" {
+				path = parent
+			}
+		}
+	}
+	if path == "" {
+		home, err := os.UserHomeDir()
+		if err == nil && strings.TrimSpace(home) != "" {
+			path = home
+		}
+	}
+	if path == "" {
+		path = string(filepath.Separator)
+	}
+
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve directory %q: %w", path, err)
+	}
+	info, err := os.Stat(absolute)
+	if err != nil {
+		return "", fmt.Errorf("stat directory %q: %w", absolute, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("path %q is not a directory", absolute)
+	}
+	return absolute, nil
+}
+
+func directoryHasChildren(path string) (bool, error) {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return false, fmt.Errorf("read directory %q: %w", path, err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func cancelSession(
@@ -704,6 +904,45 @@ func runDaemonSession(
 			if err := syncHealthyCapabilities(sessionCtx, client, nodeID, configPath, probe); err != nil {
 				return retryableDaemonError{err: err}
 			}
+		case "node.paths.update":
+			paths, ok := envelope.Payload["paths"].([]any)
+			if !ok {
+				return fmt.Errorf("node path update failed: invalid paths payload")
+			}
+			nextPaths := make([]string, 0, len(paths))
+			for _, raw := range paths {
+				path, ok := raw.(string)
+				if !ok {
+					return fmt.Errorf("node path update failed: invalid path entry")
+				}
+				nextPaths = append(nextPaths, path)
+			}
+			if err := updateConfigPaths(configPath, nextPaths); err != nil {
+				return fmt.Errorf("node path update failed: %w", err)
+			}
+			if err := syncHealthyCapabilities(sessionCtx, client, nodeID, configPath, probe); err != nil {
+				return retryableDaemonError{err: err}
+			}
+		case "node.paths.browse":
+			path, _ := envelope.Payload["path"].(string)
+			browsedPath, entries, err := browseDirectories(configPath, path)
+			if err != nil {
+				return fmt.Errorf("node path browse failed: %w", err)
+			}
+			if err := client.Send(sessionCtx, nodeclient.Envelope{
+				Type:      "node.paths.browse.result",
+				RequestID: envelope.RequestID,
+				SessionID: nil,
+				Source:    nodeID,
+				Target:    "server",
+				Payload: map[string]any{
+					"nodeId":  nodeID,
+					"path":    browsedPath,
+					"entries": entries,
+				},
+			}); err != nil {
+				return retryableDaemonError{err: err}
+			}
 		case "node.update":
 			logf("update command node=%s", nodeID)
 			if err := update(sessionCtx, os.Stdout, os.Stderr); err != nil {
@@ -725,7 +964,7 @@ func syncHealthyCapabilities(
 	if err != nil {
 		return fmt.Errorf("load config %s: %w", configPath, err)
 	}
-	capabilities := filterHealthyAgents(ctx, config.Agents, probe)
+	capabilities := capabilitiesWithStatus(ctx, configuredAgents(config), probe)
 	logf("capability sync node=%s config=%s configured=%d healthy=%d", nodeID, configPath, len(config.Agents), len(capabilities))
 	return client.Send(ctx, nodeclient.Envelope{
 		Type:      "node.capabilities.sync",
@@ -761,33 +1000,64 @@ func capabilitySyncLoop(
 	}
 }
 
-func filterHealthyAgents(
+func capabilitiesWithStatus(
 	ctx context.Context,
 	agents []nodeconfig.AgentConfig,
 	probe capabilityProber,
-) []nodeconfig.AgentConfig {
-	healthy := make([]nodeconfig.AgentConfig, 0, len(agents))
+) []map[string]any {
+	capabilities := make([]map[string]any, 0, len(agents))
 	for _, agent := range agents {
-		if probe == nil || probe(ctx, agent) {
-			healthy = append(healthy, agent)
+		status := "online"
+		if probe != nil {
+			if probeErr := probe(ctx, agent); probeErr != nil {
+				status = "error"
+				capabilities = append(capabilities, map[string]any{
+					"id":        agent.ID,
+					"name":      agent.Name,
+					"acpxAgent": agent.ACPXAgent,
+					"command":   agent.Command,
+					"args":      agent.Args,
+					"status":    status,
+					"error":     probeErr.Error(),
+					"cwd":       agent.CWD,
+					"env":       agent.Env,
+					"labels":    agent.Labels,
+				})
+				continue
+			}
 		}
+		capabilities = append(capabilities, map[string]any{
+			"id":        agent.ID,
+			"name":      agent.Name,
+			"acpxAgent": agent.ACPXAgent,
+			"command":   agent.Command,
+			"args":      agent.Args,
+			"status":    status,
+			"cwd":       agent.CWD,
+			"env":       agent.Env,
+			"labels":    agent.Labels,
+		})
 	}
-	return healthy
+	return capabilities
 }
 
 func probeAgentHealth(runner acpx.Runner) capabilityProber {
-	return func(ctx context.Context, agent nodeconfig.AgentConfig) bool {
+	return func(ctx context.Context, agent nodeconfig.AgentConfig) error {
 		probeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
 
-		return runner.Ensure(probeCtx, acpx.RunRequest{
+		err := runner.Ensure(probeCtx, acpx.RunRequest{
 			Command:    agent.Command,
 			Args:       agent.Args,
 			Agent:      agent.ACPXAgent,
 			Session:    "amesh-health-" + agent.ID,
 			WorkingDir: agent.CWD,
 			Env:        envList(agent.Env),
-		}) == nil
+		})
+		if err != nil {
+			log.Printf("agent health probe failed for %s (%s): %v", agent.Name, agent.ID, err)
+		}
+		return err
 	}
 }
 

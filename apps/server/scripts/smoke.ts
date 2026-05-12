@@ -46,7 +46,9 @@ async function main() {
       method: "POST",
       url: "/api/sessions",
       payload: {
+        nodeId: "node-source",
         agentId: "agent-claude",
+        cwd: null,
         prompt: "say hello"
       }
     });

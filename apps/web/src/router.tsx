@@ -38,6 +38,8 @@ function TopologyRouteWrapper() {
 type SessionsSearch = {
   session?: string;
   agent?: string;
+  node?: string;
+  folder?: string;
 };
 
 const rootRoute = createRootRoute({ component: Shell });
@@ -53,7 +55,9 @@ const sessionsRoute = createRoute({
   path: "/sessions",
   validateSearch: (raw: Record<string, unknown>): SessionsSearch => ({
     session: typeof raw.session === "string" ? raw.session : undefined,
-    agent: typeof raw.agent === "string" ? raw.agent : undefined
+    agent: typeof raw.agent === "string" ? raw.agent : undefined,
+    node: typeof raw.node === "string" ? raw.node : undefined,
+    folder: typeof raw.folder === "string" ? raw.folder : undefined
   }),
   component: SessionsRoute
 });

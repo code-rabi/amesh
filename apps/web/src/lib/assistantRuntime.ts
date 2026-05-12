@@ -310,7 +310,10 @@ function buildMessages(session: SessionView): ThreadMessageLike[] {
   return state.messages;
 }
 
-export function useAmeshThreadRuntime(activeAgent: AgentRecord | null) {
+export function useAmeshThreadRuntime(
+  activeAgent: AgentRecord | null,
+  sessionTarget: { nodeId: string; cwd: string | null } | null
+) {
   const sessions = useSessions();
   const sessionView = sessions.selected;
   const messagesRef = useRef<ThreadMessageLike[]>([]);
@@ -342,8 +345,13 @@ export function useAmeshThreadRuntime(activeAgent: AgentRecord | null) {
         setSendError(null);
         if (sessionView) {
           await sessions.appendPrompt(sessionView.session.id, text);
-        } else if (activeAgent) {
-          await sessions.startSession(activeAgent.id, text);
+        } else if (activeAgent && sessionTarget) {
+          await sessions.startSession({
+            nodeId: sessionTarget.nodeId,
+            agentId: activeAgent.id,
+            cwd: sessionTarget.cwd,
+            prompt: text
+          });
         } else {
           throw new Error("Pick an agent before sending.");
         }

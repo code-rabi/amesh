@@ -1,9 +1,14 @@
 import type {
   BrowserRealtimeEvent,
+  BrowseNodeDirectoriesQuery,
+  BrowseNodeDirectoriesResponse,
   CapabilitySyncPayload,
   CreateSessionRequest,
   InvocationRequestPayload,
+  NodeDirectoryBrowsePayload,
+  NodeDirectoryBrowseResultPayload,
   NodeHeartbeatPayload,
+  NodePathsUpdatePayload,
   NodeRegistrationPayload,
   NodeResumePayload,
   ProtocolEnvelope,
@@ -15,11 +20,16 @@ import type {
 } from "@amesh/protocol";
 import {
   appendSessionInputRequestSchema,
+  browseNodeDirectoriesQuerySchema,
+  browseNodeDirectoriesResponseSchema,
   browserRealtimeEventSchema,
   capabilitySyncPayloadSchema,
   createSessionRequestSchema,
   invocationRequestPayloadSchema,
+  nodeDirectoryBrowsePayloadSchema,
+  nodeDirectoryBrowseResultPayloadSchema,
   nodeHeartbeatPayloadSchema,
+  nodePathsUpdatePayloadSchema,
   nodeRegistrationPayloadSchema,
   nodeResumePayloadSchema,
   parseProtocolEnvelope,
@@ -27,6 +37,7 @@ import {
   sessionInputPayloadSchema,
   sessionStartPayloadSchema,
   topologySnapshotSchema,
+  updateNodePathsRequestSchema,
   upsertTriggerRuleRequestSchema
 } from "@amesh/protocol";
 import cookie from "@fastify/cookie";
@@ -70,6 +81,14 @@ type AppRouteDeps = {
   registrationToken: string;
   repository: Repository;
   nodeSockets: Map<string, NodeSocket>;
+  pendingDirectoryBrowses: Map<
+    string,
+    {
+      resolve: (payload: BrowseNodeDirectoriesResponse) => void;
+      reject: (error: Error) => void;
+      timeout: ReturnType<typeof setTimeout>;
+    }
+  >;
   isAuthenticated: (cookieValue: string | undefined) => boolean;
   requireBrowserAuth: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
   topologySnapshot: () => Promise<TopologySnapshot>;
@@ -98,6 +117,14 @@ export function buildApp(options: AppOptions = {}) {
   const browserSockets = new Set<WebSocket>();
   const nodeSockets = new Map<string, NodeSocket>();
   const nodeVersions = new Map<string, string | null>();
+  const pendingDirectoryBrowses = new Map<
+    string,
+    {
+      resolve: (payload: BrowseNodeDirectoriesResponse) => void;
+      reject: (error: Error) => void;
+      timeout: ReturnType<typeof setTimeout>;
+    }
+  >();
   const websocketServer = new WebSocketServer({ noServer: true });
   let latestVersionCache: { value: string | null; fetchedAt: number; pending: Promise<string | null> | null } =
     { value: null, fetchedAt: 0, pending: null };
@@ -352,6 +379,24 @@ export function buildApp(options: AppOptions = {}) {
             void broadcastTopology();
             break;
           }
+          case "node.paths.browse.result": {
+            const payload = nodeDirectoryBrowseResultPayloadSchema.parse(
+              envelope.payload
+            ) as NodeDirectoryBrowseResultPayload;
+            const pending = pendingDirectoryBrowses.get(envelope.requestId);
+            if (!pending) {
+              break;
+            }
+            clearTimeout(pending.timeout);
+            pendingDirectoryBrowses.delete(envelope.requestId);
+            pending.resolve(
+              browseNodeDirectoriesResponseSchema.parse({
+                path: payload.path,
+                entries: payload.entries
+              }) as BrowseNodeDirectoriesResponse
+            );
+            break;
+          }
           case "session.event": {
             const payload = sessionEventSchema.parse(envelope.payload) as SessionEventRecord;
             repository.appendSessionEvent({
@@ -446,6 +491,7 @@ export function buildApp(options: AppOptions = {}) {
     const childSession = repository.createLinkedSession({
       entryAgentId: payload.targetAgentId,
       initiator: "agent",
+      cwd: typeof targetAgent.capabilities.cwd === "string" ? targetAgent.capabilities.cwd : null,
       parentSessionId: payload.parentSessionId,
       sourceAgentId: payload.sourceAgentId
     });
@@ -472,9 +518,8 @@ export function buildApp(options: AppOptions = {}) {
         agentId: payload.targetAgentId,
         prompt: payload.prompt,
         initiator: "agent",
-        metadata: {
-          parentSessionId: payload.parentSessionId
-        }
+        cwd: childSession.cwd,
+        parentSessionId: payload.parentSessionId
       })
     });
     void broadcastSession(payload.parentSessionId);
@@ -500,6 +545,7 @@ export function buildApp(options: AppOptions = {}) {
     registrationToken,
     repository,
     nodeSockets,
+    pendingDirectoryBrowses,
     isAuthenticated,
     requireBrowserAuth,
     topologySnapshot,
@@ -570,6 +616,7 @@ function registerApiRoutes({
   registrationToken,
   repository,
   nodeSockets,
+  pendingDirectoryBrowses,
   isAuthenticated,
   requireBrowserAuth,
   topologySnapshot,
@@ -617,6 +664,24 @@ function registerApiRoutes({
   app.post("/api/nodes/:nodeId/detect", { preHandler: requireBrowserAuth }, async (request: FastifyRequest, reply: FastifyReply) =>
     triggerNodeAction(request, reply, repository, nodeSockets, sendToNode, "detect")
   );
+  app.post("/api/nodes/:nodeId/paths", { preHandler: requireBrowserAuth }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const params = request.params as { nodeId: string };
+    const body = updateNodePathsRequestSchema.parse(request.body) as { paths: string[] };
+    return triggerNodePathUpdate(params.nodeId, body.paths, reply, repository, nodeSockets, sendToNode);
+  });
+  app.get("/api/nodes/:nodeId/directories", { preHandler: requireBrowserAuth }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const params = request.params as { nodeId: string };
+    const query = browseNodeDirectoriesQuerySchema.parse(request.query) as BrowseNodeDirectoriesQuery;
+    return triggerNodeDirectoryBrowse(
+      params.nodeId,
+      query.path,
+      reply,
+      repository,
+      nodeSockets,
+      sendToNode,
+      pendingDirectoryBrowses
+    );
+  });
   app.get("/api/sessions", { preHandler: requireBrowserAuth }, async () => repository.listSessions());
   app.get("/api/sessions/:sessionId", { preHandler: requireBrowserAuth }, async (request: FastifyRequest, reply: FastifyReply) => {
     const state = repository.getSession((request.params as { sessionId: string }).sessionId);
@@ -651,7 +716,27 @@ function registerApiRoutes({
       reply.code(404);
       return { message: "agent not found" };
     }
-    const session = repository.createSession(body.agentId, "user");
+    if (agent.nodeId !== body.nodeId) {
+      reply.code(400);
+      return { message: "agent does not belong to node" };
+    }
+    const requestedCwd = typeof body.cwd === "string" ? body.cwd.trim() : "";
+    const fixedCwd = typeof agent.capabilities.cwd === "string" ? agent.capabilities.cwd : null;
+    const cwd = requestedCwd || fixedCwd;
+    const node = repository.findNode(body.nodeId);
+    if (!node) {
+      reply.code(404);
+      return { message: "node not found" };
+    }
+    if (requestedCwd && requestedCwd !== fixedCwd && !node.paths.includes(requestedCwd)) {
+      reply.code(400);
+      return { message: "folder is not exposed on node" };
+    }
+    const session = repository.createSession({
+      entryAgentId: body.agentId,
+      initiator: "user",
+      cwd
+    });
     repository.updateSessionStatus(session.id, "running");
     repository.appendSessionEvent({
       sessionId: session.id,
@@ -672,7 +757,9 @@ function registerApiRoutes({
         sessionId: session.id,
         agentId: body.agentId,
         prompt: body.prompt,
-        initiator: "user"
+        initiator: "user",
+        cwd,
+        parentSessionId: null
       })
     });
     await broadcastSession(session.id);
@@ -761,6 +848,29 @@ function registerApiRoutes({
   });
 }
 
+function validateOnlineNodeAction(
+  nodeId: string,
+  action: string,
+  reply: FastifyReply,
+  repository: Repository,
+  nodeSockets: Map<string, NodeSocket>
+) {
+  const node = repository.findNode(nodeId);
+  if (!node) {
+    reply.code(404);
+    return { ok: false as const, body: { message: "node not found" } };
+  }
+  if (node.status !== "online") {
+    reply.code(409);
+    return { ok: false as const, body: { message: `node must be online to ${action}` } };
+  }
+  if (!nodeSockets.has(node.id)) {
+    reply.code(409);
+    return { ok: false as const, body: { message: "node socket is not connected" } };
+  }
+  return { ok: true as const, node };
+}
+
 async function triggerNodeAction(
   request: FastifyRequest,
   reply: FastifyReply,
@@ -770,31 +880,112 @@ async function triggerNodeAction(
   action: "update" | "detect"
 ) {
   const params = request.params as { nodeId: string };
-  const node = repository.findNode(params.nodeId);
-  if (!node) {
-    reply.code(404);
-    return { message: "node not found" };
-  }
-  if (node.status !== "online") {
-    reply.code(409);
-    return { message: `node must be online to ${action === "update" ? "update" : "detect agents"}` };
-  }
-  if (!nodeSockets.has(node.id)) {
-    reply.code(409);
-    return { message: "node socket is not connected" };
+  const validation = validateOnlineNodeAction(
+    params.nodeId,
+    action === "update" ? "update" : "detect agents",
+    reply,
+    repository,
+    nodeSockets
+  );
+  if (!validation.ok) {
+    return validation.body;
   }
 
-  sendToNode(node.id, {
+  sendToNode(validation.node.id, {
     type: action === "update" ? "node.update" : "node.detect",
     requestId: nanoid(10),
     sessionId: null,
     source: "server",
-    target: node.id,
+    target: validation.node.id,
     payload: {
-      nodeId: node.id
+      nodeId: validation.node.id
     }
   });
   return { ok: true };
+}
+
+function triggerNodePathUpdate(
+  nodeId: string,
+  paths: string[],
+  reply: FastifyReply,
+  repository: Repository,
+  nodeSockets: Map<string, NodeSocket>,
+  sendToNode: (nodeId: string, envelope: ProtocolEnvelope) => void
+) {
+  const validation = validateOnlineNodeAction(
+    nodeId,
+    "update exposed paths",
+    reply,
+    repository,
+    nodeSockets
+  );
+  if (!validation.ok) {
+    return validation.body;
+  }
+
+  repository.setNodePaths(validation.node.id, paths);
+
+  sendToNode(validation.node.id, {
+    type: "node.paths.update",
+    requestId: nanoid(10),
+    sessionId: null,
+    source: "server",
+    target: validation.node.id,
+    payload: nodePathsUpdatePayloadSchema.parse({
+      nodeId: validation.node.id,
+      paths
+    }) as NodePathsUpdatePayload
+  });
+  return { ok: true };
+}
+
+function triggerNodeDirectoryBrowse(
+  nodeId: string,
+  path: string | undefined,
+  reply: FastifyReply,
+  repository: Repository,
+  nodeSockets: Map<string, NodeSocket>,
+  sendToNode: (nodeId: string, envelope: ProtocolEnvelope) => void,
+  pendingDirectoryBrowses: Map<
+    string,
+    {
+      resolve: (payload: BrowseNodeDirectoriesResponse) => void;
+      reject: (error: Error) => void;
+      timeout: ReturnType<typeof setTimeout>;
+    }
+  >
+) {
+  const validation = validateOnlineNodeAction(
+    nodeId,
+    "browse directories",
+    reply,
+    repository,
+    nodeSockets
+  );
+  if (!validation.ok) {
+    return validation.body;
+  }
+
+  const requestId = nanoid(10);
+  return new Promise<BrowseNodeDirectoriesResponse>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      pendingDirectoryBrowses.delete(requestId);
+      reject(new Error("directory browse timed out"));
+    }, 5000);
+
+    pendingDirectoryBrowses.set(requestId, { resolve, reject, timeout });
+    sendToNode(validation.node.id, {
+      type: "node.paths.browse",
+      requestId,
+      sessionId: null,
+      source: "server",
+      target: validation.node.id,
+      payload: nodeDirectoryBrowsePayloadSchema.parse({
+        nodeId: validation.node.id,
+        path: path ?? ""
+      }) as NodeDirectoryBrowsePayload
+    });
+  });
 }
 
 async function sendStaticFile(reply: { type: (contentType: string) => void; send: (payload: Buffer) => void }, staticRoot: string, assetPath: string) {

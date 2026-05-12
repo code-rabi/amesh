@@ -34,16 +34,22 @@ sh -n scripts/install-amesh-node.sh
 - Set `AUTH_SESSION_SECRET` if you want browser sessions to survive a server restart. If it is missing, the server generates a random in-memory secret and all cookies are invalidated on restart.
 - The server enforces `AMESH_REGISTRATION_TOKEN` when set. In local development, leaving it unset keeps registration open; in deployed environments it should be set explicitly.
 - The Go daemon expects an `agents.json`-shaped capabilities file for local agent definitions, but `amesh-node detect --config <path>` can generate that file from live ACPX probing.
+- Node configs can also carry a top-level `paths` list. Those are exposed folders for sessions on that node; they are not separate agents.
 - Detection records locally installed ACPX-backed agent CLIs even if a given provider is slow to start or temporarily unhealthy; live topology health is still decided by the separate daemon-side ACPX health probe loop.
 - `corepack pnpm dev:daemon` installs a managed ACPX sidecar under `~/.local/share/amesh/acpx` if needed, writes `.amesh-agents.json` by detection on first run, saves `.amesh-node-state.json`, and then starts the long-lived daemon process against that generated config.
+- `corepack pnpm dev:daemon` never uses `examples/agents.json`. If it finds stale local daemon state that still points at that example file, it deletes `.amesh-node-state.json` and the generated local config so the next start re-detects into `.amesh-agents.json`.
+- `corepack pnpm dev:daemon` also normalizes `~/.acpx/config.json` before detect/register. If `nonInteractivePermissions` is missing or invalid, it rewrites that field to `deny` so first local boot does not fail on stale ACPX user config.
 - The daemon now keeps running when the control plane goes away. It retries websocket connect, `node.resume`, and capability sync with backoff until the server returns.
 - Agent topology status is derived from daemon-side ACPX health probes, not just from the node websocket being connected. Unhealthy local agents are omitted from capability sync and appear offline in the control plane.
 - The dashboard can send a `Detect agents` action to an online node. The daemon rewrites its config from live detection and immediately re-syncs capabilities back to the control plane.
+- The dashboard can also update a node's exposed path list while it is online. Those paths are validated on the node host and written back to the same config file.
+- The sessions view treats those exposed paths as folder choices on the node. New sessions persist the selected `cwd`, and the session header keeps showing that folder even if topology later changes.
 - The server smoke script authenticates through `/api/auth/login` before it exercises operator APIs, so local smoke usage matches production browser auth instead of relying on anonymous access.
 - `corepack pnpm check:knip` runs unused dependency and export checks against the TypeScript workspaces only; it intentionally ignores repo-local agent skill folders and the Go tree.
 - `corepack pnpm check:sentrux` installs a pinned user-space `sentrux` binary under `.tools/` on first run and enforces the repo rules from `.sentrux/rules.toml`.
 - `install-amesh-node.sh` downloads the released `amesh-node` binary for the current platform, installs a managed ACPX sidecar under `~/.local/share/amesh/acpx`, and exports `AMESH_ACPX_PATH` for the service.
 - The installer now logs whether it is reusing or creating config/state, and on systemd hosts it fails the install if the user service does not remain active after startup. When that happens it prints both `systemctl --user status` and recent `journalctl --user -u amesh-node` output.
+- `install-amesh-node.sh` also normalizes `~/.acpx/config.json` so ACPX non-interactive health probes start from a valid baseline on first install.
 - ACP aliases for external clients can be served locally with `go run ./cmd/amesh acp <alias>`. The default alias registry is `~/.config/amesh/acp.json`:
 
 ```json
@@ -96,7 +102,7 @@ go run ./cmd/amesh-node run \
   --state .amesh-node-state.json
 ```
 
-4. Open the dashboard, use `Detect agents` if you want to force a refresh on the running node, then create an allow rule and start a chat session against any detected online agent.
+4. Open the dashboard, use `Set paths` or `Paths (n)` on a node if you want exposed session folders, use `Detect agents` if you want to force an inventory refresh, then create an allow rule and start a chat session against any detected online agent.
 
 ## Remote install
 

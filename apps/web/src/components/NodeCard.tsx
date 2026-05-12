@@ -3,8 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 
 import type { AgentRecord, AgentStatus, NodeRecord, NodeStatus } from "@amesh/protocol";
 import { relativeTime } from "../lib/time.js";
-import { NodeDetectButton } from "./NodeDetectButton.js";
-import { NodeUpdateButton } from "./NodeUpdateButton.js";
+import { NodeSettingsButton } from "./NodeSettingsButton.js";
 
 export type NodeCardData = {
   node: NodeRecord;
@@ -52,10 +51,7 @@ export function NodeCard({ data }: NodeCardProps) {
         <div className="node-card__meta">
           <span className={nodePill(node.status)}>{nodePillLabel(node.status)}</span>
           <div onPointerDown={(event) => event.stopPropagation()}>
-            <NodeDetectButton node={node} compact />
-          </div>
-          <div onPointerDown={(event) => event.stopPropagation()}>
-            <NodeUpdateButton node={node} compact />
+            <NodeSettingsButton node={node} agents={agents} />
           </div>
         </div>
       </div>
@@ -71,6 +67,9 @@ export function NodeCard({ data }: NodeCardProps) {
                 <div>
                   <div className="node-card__agent-name">{agent.name}</div>
                   <div className="node-card__agent-id">{agent.id}</div>
+                  {typeof agent.capabilities.cwd === "string" ? (
+                    <div className="node-card__agent-cwd">{agent.capabilities.cwd}</div>
+                  ) : null}
                 </div>
                 <div className="node-card__agent-tail">
                   <button
@@ -85,7 +84,12 @@ export function NodeCard({ data }: NodeCardProps) {
                       if (chatDisabled) return;
                       void navigate({
                         to: "/sessions",
-                        search: { agent: agent.id, session: undefined }
+                        search: {
+                          node: agent.nodeId,
+                          folder: undefined,
+                          agent: agent.id,
+                          session: undefined,
+                        }
                       });
                     }}
                   >
@@ -99,12 +103,38 @@ export function NodeCard({ data }: NodeCardProps) {
                       />
                     </svg>
                   </button>
-                  <span
-                    className="node-card__agent-status"
-                    data-status={agent.status}
-                  >
-                    {agentStatusLabel(agent.status)}
-                  </span>
+                  {agent.status === "error" ? (
+                    <div onPointerDown={(event) => event.stopPropagation()}>
+                      <NodeSettingsButton
+                        node={node}
+                        agents={agents}
+                        startTab="agents"
+                        renderTrigger={({ open, openModal }) => (
+                          <button
+                            type="button"
+                            className="node-card__agent-status node-card__agent-status--button"
+                            data-status={agent.status}
+                            aria-label={`Open error details for ${agent.name} on ${node.name}`}
+                            aria-haspopup="dialog"
+                            aria-expanded={open}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openModal();
+                            }}
+                          >
+                            {agentStatusLabel(agent.status)}
+                          </button>
+                        )}
+                      />
+                    </div>
+                  ) : (
+                    <span
+                      className="node-card__agent-status"
+                      data-status={agent.status}
+                    >
+                      {agentStatusLabel(agent.status)}
+                    </span>
+                  )}
                 </div>
 
                 <Handle

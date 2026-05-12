@@ -37,6 +37,15 @@ func TestLoad(t *testing.T) {
 	if len(file.Agents) != 1 {
 		t.Fatalf("unexpected agents length: %d", len(file.Agents))
 	}
+	if len(file.Agents[0].Args) != 0 {
+		t.Fatalf("expected args to normalize to empty slice, got %#v", file.Agents[0].Args)
+	}
+	if file.Agents[0].Env == nil {
+		t.Fatal("expected env to normalize to empty map")
+	}
+	if file.Agents[0].Labels == nil {
+		t.Fatal("expected labels to normalize to empty slice")
+	}
 }
 
 func TestLoadUsesManagedACPXPathForDefaultCommand(t *testing.T) {
