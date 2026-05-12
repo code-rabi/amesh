@@ -1,4 +1,7 @@
 import type { TopologySnapshot } from "@amesh/protocol";
+import { useState } from "react";
+
+import { renameAgent } from "../api.js";
 
 type Props = {
   topology: TopologySnapshot;
@@ -7,6 +10,7 @@ type Props = {
 };
 
 export function AgentPicker({ topology, selectedAgentId, onSelect }: Props) {
+  const [savingId, setSavingId] = useState<string | null>(null);
   const onlineAgents = topology.agents.filter((agent) => agent.status === "online");
   const others = topology.agents.filter((agent) => agent.status !== "online");
 
@@ -33,9 +37,16 @@ export function AgentPicker({ topology, selectedAgentId, onSelect }: Props) {
                   data-selected={selectedAgentId === agent.id}
                   disabled={disabled}
                   onClick={() => onSelect(agent.id)}
+                  onDoubleClick={async () => {
+                    if (savingId===agent.id) return;
+                    const value = window.prompt("Set display name", agent.displayName ?? agent.name);
+                    if (value===null) return;
+                    setSavingId(agent.id);
+                    try { await renameAgent(agent.id, value.trim() ? value.trim() : null); } finally { setSavingId(null);}
+                  }}
                 >
                   <div>
-                    <div className="agent-picker__name">{agent.name}</div>
+                    <div className="agent-picker__name">{agent.displayName ?? agent.name}</div>
                     <div className="agent-picker__sub">
                       <span>{node?.name ?? "unknown node"}</span>
                       <span>·</span>

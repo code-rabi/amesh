@@ -109,6 +109,30 @@ describe("server app", () => {
     socket.close();
   });
 
+
+  it("renames an agent display name from browser API", async () => {
+    const socket = new WebSocket(`ws://${address}/ws?role=node&nodeId=node-1`);
+    await waitForOpen(socket);
+    socket.send(JSON.stringify(registerNode("node-1", "a")));
+    await readNodeMessage(socket);
+    socket.send(JSON.stringify(syncCapabilities("node-1", [{ id: "agent-a", name: "Planner", acpxAgent: "planner" }])));
+    await waitForIdle();
+
+    const patch = await injectAuthed(app, authCookie, {
+      method: "PATCH",
+      url: "/api/agents/agent-a",
+      payload: { displayName: "Triage Agent" }
+    });
+    expect(patch.statusCode).toBe(200);
+    expect(patch.json()).toMatchObject({ id: "agent-a", displayName: "Triage Agent" });
+
+    const topology = await injectAuthed(app, authCookie, { method: "GET", url: "/api/topology" });
+    expect(topology.statusCode).toBe(200);
+    expect(topology.json().agents).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "agent-a", displayName: "Triage Agent" })])
+    );
+    socket.close();
+  });
   it("keeps a node in topology even when it advertises zero agents", async () => {
     const socket = new WebSocket(`ws://${address}/ws?role=node&nodeId=node-empty`);
     await waitForOpen(socket);

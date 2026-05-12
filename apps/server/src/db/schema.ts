@@ -17,6 +17,7 @@ export const agentsTable = sqliteTable("agents", {
     .notNull()
     .references(() => nodesTable.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
+  displayName: text("display_name"),
   backend: text("backend").notNull(),
   status: text("status").notNull(),
   capabilities: text("capabilities").notNull()
