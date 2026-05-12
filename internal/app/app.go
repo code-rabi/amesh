@@ -256,12 +256,60 @@ func detectAgents(ctx context.Context, runner acpx.Runner) []nodeconfig.AgentCon
 			ACPXAgent: candidate.ACPXAgent,
 			Command:   defaultACPXCommand(),
 			Args:      []string{},
-			Env:       map[string]string{},
+			Env:       detectedAgentEnv(candidate),
 			Labels:    []string{"detected"},
 		}
 		agents = append(agents, agent)
 	}
 	return agents
+}
+
+func detectedAgentEnv(candidate detectableAgent) map[string]string {
+	pathEntries := uniquePathEntries(
+		filepath.SplitList(os.Getenv("PATH")),
+		lookPathDir(candidate.ACPXAgent),
+		lookPathDir("node"),
+	)
+	if len(pathEntries) == 0 {
+		return map[string]string{}
+	}
+	return map[string]string{
+		"PATH": strings.Join(pathEntries, string(os.PathListSeparator)),
+	}
+}
+
+func lookPathDir(command string) []string {
+	if strings.TrimSpace(command) == "" {
+		return nil
+	}
+	path, err := exec.LookPath(command)
+	if err != nil {
+		return nil
+	}
+	dir := strings.TrimSpace(filepath.Dir(path))
+	if dir == "" {
+		return nil
+	}
+	return []string{dir}
+}
+
+func uniquePathEntries(groups ...[]string) []string {
+	seen := map[string]struct{}{}
+	entries := make([]string, 0)
+	for _, group := range groups {
+		for _, entry := range group {
+			entry = strings.TrimSpace(entry)
+			if entry == "" {
+				continue
+			}
+			if _, ok := seen[entry]; ok {
+				continue
+			}
+			seen[entry] = struct{}{}
+			entries = append(entries, entry)
+		}
+	}
+	return entries
 }
 
 func detectInstalledAgents(candidates []detectableAgent) []detectableAgent {

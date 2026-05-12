@@ -163,13 +163,31 @@ need_cmd curl
 need_cmd uname
 need_cmd mktemp
 need_cmd tar
+need_cmd node
 need_cmd npm
 need_cmd install
 need_cmd mkdir
 
+require_node_major() {
+  min_major="$1"
+  current_major="$(
+    node -p 'const [major] = process.versions.node.split("."); process.stdout.write(String(Number(major)))' 2>/dev/null
+  )"
+  case "$current_major" in
+    ''|*[!0-9]*)
+      fail "could not determine Node.js major version from $(command -v node)"
+      ;;
+  esac
+  if [ "$current_major" -lt "$min_major" ]; then
+    fail "Node.js ${min_major}+ is required; found $(node -v) at $(command -v node)"
+  fi
+}
+
 if [[ -z "$SERVER_URL" ]]; then
   fail "SERVER_URL is required"
 fi
+
+require_node_major 22
 
 os="$(detect_os)"
 arch="$(detect_arch)"
@@ -259,6 +277,7 @@ Wants=network-online.target
 Type=simple
 Environment=AMESH_ACPX_PATH=$ACPX_BIN
 Environment=AMESH_NODE_VERSION=$tag
+Environment=PATH=$PATH
 ExecStart=$binary_path run --state $STATE_PATH
 Restart=always
 RestartSec=5
