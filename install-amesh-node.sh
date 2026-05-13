@@ -174,6 +174,16 @@ require_node_major() {
   fi
 }
 
+systemd_escape_env_value() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+write_systemd_env() {
+  key="$1"
+  value="$2"
+  printf 'Environment="%s=%s"\n' "$key" "$(systemd_escape_env_value "$value")"
+}
+
 main() {
   need_cmd curl
   need_cmd uname
@@ -268,7 +278,8 @@ main() {
     fail "REGISTRATION_TOKEN is required for first-time registration"
   fi
 
-  cat >"$SERVICE_PATH" <<EOF
+  {
+    cat <<EOF
 [Unit]
 Description=amesh remote node daemon
 After=network-online.target
@@ -276,16 +287,19 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-Environment=AMESH_ACPX_PATH=$ACPX_BIN
-Environment=AMESH_NODE_VERSION=$tag
-Environment=PATH=$PATH
-ExecStart=$binary_path run --state $STATE_PATH
+EOF
+    write_systemd_env "AMESH_ACPX_PATH" "$ACPX_BIN"
+    write_systemd_env "AMESH_NODE_VERSION" "$tag"
+    write_systemd_env "PATH" "$PATH"
+    printf 'ExecStart=%q run --state %q\n' "$binary_path" "$STATE_PATH"
+    cat <<EOF
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=default.target
 EOF
+  } >"$SERVICE_PATH"
 
   if command -v systemctl >/dev/null 2>&1; then
     systemctl --user daemon-reload

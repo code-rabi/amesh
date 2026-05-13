@@ -138,12 +138,14 @@ EOF
 chmod +x "$stdin_stub_dir/node"
 
 stdin_env_dir="$tmp_dir/stdin-env"
+stdin_space_dir="$tmp_dir/stdin path with spaces"
 mkdir -p "$stdin_env_dir"
+mkdir -p "$stdin_space_dir"
 printf '{}\n' >"$stdin_env_dir/agents.json"
 printf '{}\n' >"$stdin_env_dir/node-state.json"
 
 stdin_log="$tmp_dir/stdin.log"
-if ! PATH="$stdin_stub_dir:$PATH" \
+if ! PATH="$stdin_stub_dir:$stdin_space_dir:$PATH" \
   AMESH_VERSION_TAG='test-tag' \
   INSTALL_DIR="$stdin_env_dir/bin" \
   AMESH_HOME="$stdin_env_dir/home" \
@@ -160,3 +162,7 @@ if ! PATH="$stdin_stub_dir:$PATH" \
   cat "$stdin_log" >&2
   exit 1
 fi
+
+assert_contains 'Environment="AMESH_ACPX_PATH=' "$stdin_env_dir/amesh-node.service"
+assert_contains 'Environment="AMESH_NODE_VERSION=test-tag"' "$stdin_env_dir/amesh-node.service"
+assert_contains "$stdin_space_dir" "$stdin_env_dir/amesh-node.service"

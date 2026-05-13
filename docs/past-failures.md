@@ -12,6 +12,12 @@
 - Cause: detection treated executable presence as enough, while OpenClaw's ACPX target needs `openclaw acp` to run as a clean stdio ACP server from the daemon environment.
 - Mitigation: OpenClaw detection now probes every `openclaw` executable directory on `PATH` with ACPX `sessions ensure`, persists the first PATH ordering that initializes successfully, and omits OpenClaw if none can start ACP. A regression test covers a broken wrapper before a working executable.
 
+## 2026-05-13: Installer service PATH could be truncated by spaces
+
+- Symptom: a node installed successfully, but the user service could later run with a truncated `PATH` when the shell PATH contained entries with spaces such as WSL-mounted `Program Files` directories.
+- Cause: the installer wrote raw `Environment=PATH=...` lines into the systemd unit. systemd splits unquoted environment assignments on whitespace.
+- Mitigation: the installer now quotes and escapes systemd `Environment` values, and the stdin installer test covers a PATH entry containing spaces.
+
 ## 2026-05-12: Installer rejected valid Node 24 runtimes
 
 - Symptom: remote bootstrap failed early with `could not determine Node.js major version` even though `node -v` reported `v24.13.1`.
