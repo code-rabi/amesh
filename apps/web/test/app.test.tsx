@@ -399,6 +399,42 @@ describe("App shell", () => {
     expect(screen.getByText(/codex login required/i)).toBeTruthy();
   });
 
+  it("keeps the selected node modal tab during topology refreshes", async () => {
+    narrowLayout = true;
+    window.history.pushState({}, "", "/");
+    render(<App />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /open settings for lab-01/i })).toBeTruthy()
+    );
+    fireEvent.click(screen.getByRole("button", { name: /open settings for lab-01/i }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("dialog", { name: /node settings for lab-01/i })).toBeTruthy()
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /agents/i }));
+    expect(screen.getByRole("tab", { name: /agents/i }).getAttribute("aria-selected")).toBe("true");
+
+    topologyNodes = topologyNodes.map((node) => ({
+      ...node,
+      paths: [...node.paths, "/srv/work/repo-b"]
+    }));
+    socket.onmessage?.({
+      data: JSON.stringify({
+        type: "topology.updated",
+        payload: {
+          nodes: topologyNodes,
+          agents: topologyAgents,
+          triggerRules: []
+        }
+      })
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: /agents/i }).getAttribute("aria-selected")).toBe("true")
+    );
+  });
+
   it("hides the node update action when the node is already current", async () => {
     narrowLayout = true;
     updateRequired = false;

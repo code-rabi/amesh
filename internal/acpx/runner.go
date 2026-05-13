@@ -4,9 +4,12 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -34,6 +37,9 @@ func (Runner) Ensure(ctx context.Context, request RunRequest) error {
 	if strings.TrimSpace(request.Agent) == "" {
 		return nil
 	}
+	if err := ensureCompatibleConfig(); err != nil {
+		return err
+	}
 	return runCommand(ctx, command, buildEnsureArgs(request), request.WorkingDir, request.Env, "")
 }
 
@@ -52,6 +58,9 @@ func (Runner) Run(
 	}
 
 	if strings.TrimSpace(request.Agent) != "" {
+		if err := ensureCompatibleConfig(); err != nil {
+			return nil, err
+		}
 		if err := (Runner{}).Ensure(ctx, request); err != nil {
 			return nil, fmt.Errorf("ensure acpx session: %w", err)
 		}
@@ -59,6 +68,44 @@ func (Runner) Run(
 	}
 
 	return runStreamingCommand(ctx, command, request.Args, request.WorkingDir, request.Env, request.Stdin, onStdoutLine)
+}
+
+func ensureCompatibleConfig() error {
+	path := strings.TrimSpace(os.Getenv("ACPX_CONFIG_PATH"))
+	if path == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("resolve ACPX config path: %w", err)
+		}
+		path = filepath.Join(home, ".acpx", "config.json")
+	}
+
+	config := map[string]any{}
+	if bytes, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(bytes, &config); err != nil {
+			return fmt.Errorf("decode ACPX config %s: %w", path, err)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("read ACPX config %s: %w", path, err)
+	}
+
+	if config["nonInteractivePermissions"] == "deny" || config["nonInteractivePermissions"] == "fail" {
+		return nil
+	}
+	config["nonInteractivePermissions"] = "deny"
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("create ACPX config dir: %w", err)
+	}
+	bytes, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode ACPX config: %w", err)
+	}
+	bytes = append(bytes, '\n')
+	if err := os.WriteFile(path, bytes, 0o600); err != nil {
+		return fmt.Errorf("write ACPX config %s: %w", path, err)
+	}
+	return nil
 }
 
 func buildEnsureArgs(request RunRequest) []string {

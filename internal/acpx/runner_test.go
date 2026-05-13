@@ -2,8 +2,10 @@ package acpx
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -53,6 +55,44 @@ func TestRunnerCancelsProcess(t *testing.T) {
 	}
 }
 
+func TestRunnerNormalizesInvalidNonInteractivePermissions(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ACPX_CONFIG_PATH", "")
+	configPath := filepath.Join(home, ".acpx", "config.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte(`{"nonInteractivePermissions":"approve-all","theme":"dark"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	command, args := helperCommand(t, "ok")
+	if err := (Runner{}).Ensure(context.Background(), RunRequest{
+		Command: command,
+		Args:    args,
+		Agent:   "codex",
+		Env:     []string{"GO_WANT_HELPER_PROCESS=1"},
+	}); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+
+	bytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]any
+	if err := json.Unmarshal(bytes, &config); err != nil {
+		t.Fatal(err)
+	}
+	if config["nonInteractivePermissions"] != "deny" {
+		t.Fatalf("nonInteractivePermissions = %q, want deny", config["nonInteractivePermissions"])
+	}
+	if config["theme"] != "dark" {
+		t.Fatalf("theme = %q, want dark", config["theme"])
+	}
+}
+
 func TestRunnerHelperProcess(t *testing.T) {
 	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
 		return
@@ -67,6 +107,8 @@ func TestRunnerHelperProcess(t *testing.T) {
 	}
 
 	switch mode {
+	case "ok":
+		os.Exit(0)
 	case "emit-lines":
 		fmt.Fprintln(os.Stdout, "one")
 		fmt.Fprintln(os.Stdout, "two")
