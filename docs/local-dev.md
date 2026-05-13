@@ -19,6 +19,7 @@ corepack pnpm check:knip
 corepack pnpm check:sentrux
 bash -n scripts/dev-daemon.sh
 bash -n scripts/sentrux-check.sh
+bash scripts/test-install-amesh-node.sh
 sh -n install-amesh-node.sh
 sh -n scripts/install-amesh-node.sh
 ```
