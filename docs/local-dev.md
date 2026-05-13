@@ -49,6 +49,7 @@ sh -n scripts/install-amesh-node.sh
 - `corepack pnpm check:knip` runs unused dependency and export checks against the TypeScript workspaces only; it intentionally ignores repo-local agent skill folders and the Go tree.
 - `corepack pnpm check:sentrux` installs a pinned user-space `sentrux` binary under `.tools/` on first run and enforces the repo rules from `.sentrux/rules.toml`.
 - `install-amesh-node.sh` downloads the released `amesh-node` binary for the current platform, installs a managed ACPX sidecar under `~/.local/share/amesh/acpx`, and exports `AMESH_ACPX_PATH` for the service.
+- The published remote bootstrap path is `curl .../install-amesh-node.sh | ... bash`, so the installer must keep working when Bash reads it from stdin instead of from a file.
 - The installer now logs whether it is reusing or creating config/state, and on systemd hosts it fails the install if the user service does not remain active after startup. When that happens it prints both `systemctl --user status` and recent `journalctl --user -u amesh-node` output.
 - `install-amesh-node.sh` also normalizes `~/.acpx/config.json` so ACPX non-interactive health probes start from a valid baseline on first install.
 - Detected agents now persist the registering shell's `PATH` into node config. This avoids later service-only regressions where a systemd user unit resolves a different `node` binary than the interactive shell that successfully ran the same agent CLI.
