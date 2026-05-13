@@ -107,6 +107,12 @@ set -euo pipefail
 exit 0
 BIN
 chmod +x "$target_dir/amesh-node"
+cat <<'BIN' >"$target_dir/amesh"
+#!/usr/bin/env bash
+set -euo pipefail
+exit 0
+BIN
+chmod +x "$target_dir/amesh"
 EOF
 chmod +x "$stdin_stub_dir/tar"
 
@@ -166,3 +172,4 @@ fi
 assert_contains 'Environment="AMESH_ACPX_PATH=' "$stdin_env_dir/amesh-node.service"
 assert_contains 'Environment="AMESH_NODE_VERSION=test-tag"' "$stdin_env_dir/amesh-node.service"
 assert_contains "$stdin_space_dir" "$stdin_env_dir/amesh-node.service"
+test -x "$stdin_env_dir/bin/amesh"

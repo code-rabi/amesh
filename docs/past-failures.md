@@ -18,6 +18,12 @@
 - Cause: the installer wrote raw `Environment=PATH=...` lines into the systemd unit. systemd splits unquoted environment assignments on whitespace.
 - Mitigation: the installer now quotes and escapes systemd `Environment` values, and the stdin installer test covers a PATH entry containing spaces.
 
+## 2026-05-13: Main artifact build failed in ACPX stream test
+
+- Symptom: the `Build linux-amd64` artifact job on `main` failed in `TestRunnerStreamsStdoutLineByLine` with empty stdout from the helper process.
+- Cause: that test depended on re-running the Go test binary as a helper process for a simple stdout/stderr stream case, which made the artifact workflow sensitive to test-binary invocation behavior.
+- Mitigation: the stream test now uses a tiny explicit executable fixture for the stdout/stderr path and keeps the Go helper process only for ACPX command-shape tests.
+
 ## 2026-05-12: Installer rejected valid Node 24 runtimes
 
 - Symptom: remote bootstrap failed early with `could not determine Node.js major version` even though `node -v` reported `v24.13.1`.

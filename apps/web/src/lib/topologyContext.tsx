@@ -1,10 +1,12 @@
-import { createContext, useContext, type ReactNode } from "react";
-import type { TopologySnapshot } from "@amesh/protocol";
+import { createContext, useContext, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import type { NodeLogEntry, TopologySnapshot } from "@amesh/protocol";
 
 import { type ConnectionState, useTopologyStore } from "./topologyStore.js";
 
 type TopologyContextValue = {
   topology: TopologySnapshot;
+  nodeLogs: Record<string, NodeLogEntry[]>;
+  setNodeLogs: Dispatch<SetStateAction<Record<string, NodeLogEntry[]>>>;
   connection: ConnectionState;
   refresh: () => void;
 };

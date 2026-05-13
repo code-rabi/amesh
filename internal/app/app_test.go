@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -157,6 +158,31 @@ func TestRunDispatchesDetectSubcommand(t *testing.T) {
 	}
 	if !called {
 		t.Fatal("expected detect runner to be called")
+	}
+}
+
+func TestRunLogsSubcommandTailsUserServiceJournal(t *testing.T) {
+	binDir := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "journal-args")
+	writeExecutable(t, filepath.Join(binDir, "journalctl"), fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$@" > %q
+printf 'node log line\n'
+`, logPath))
+	t.Setenv("PATH", binDir)
+
+	var stdout bytes.Buffer
+	if err := runLogs(context.Background(), []string{"--service", "amesh-node", "-n", "12", "--follow=false"}, &stdout, io.Discard); err != nil {
+		t.Fatalf("runLogs() error = %v", err)
+	}
+	if got := stdout.String(); !strings.Contains(got, "node log line") {
+		t.Fatalf("stdout = %q, want journal output", got)
+	}
+	bytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(bytes); !strings.Contains(got, "--user\n-u\namesh-node\n-n\n12\n--no-pager\n") {
+		t.Fatalf("journal args = %q", got)
 	}
 }
 
@@ -441,6 +467,63 @@ func TestCapabilitiesWithStatus(t *testing.T) {
 	}
 }
 
+func TestRunDaemonSessionSendsHealthProbeLogs(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	client := &fakeDaemonClient{
+		readResults: []fakeReadResult{
+			{envelope: nodeclient.Envelope{Type: "node.resumed"}},
+		},
+		blockReadsUntilCanceled: true,
+	}
+
+	err := runDaemonSession(
+		ctx,
+		"ws://example.invalid/ws?role=node",
+		"node-a",
+		"token-a",
+		writeConfig(t, nodeconfig.File{
+			NodeName: "node-a",
+			Agents: []nodeconfig.AgentConfig{
+				{ID: "agent-openclaw", Name: "OpenClaw", ACPXAgent: "openclaw"},
+			},
+		}),
+		acpx.Runner{},
+		newSessionStore(),
+		func(string) daemonClient { return client },
+		func(context.Context, nodeconfig.AgentConfig) error {
+			cancel()
+			return errors.New("ACP metadata is missing")
+		},
+		func(context.Context, io.Writer, io.Writer) error { return nil },
+		func(context.Context, string) error { return nil },
+	)
+	if err != nil {
+		t.Fatalf("runDaemonSession() error = %v", err)
+	}
+
+	for _, envelope := range client.sent {
+		if envelope.Type != "node.log" {
+			continue
+		}
+		if envelope.Payload["message"] == "agent health probe failed" &&
+			envelope.Payload["level"] == "error" {
+			contextPayload, ok := envelope.Payload["context"].(map[string]any)
+			if !ok {
+				t.Fatalf("node log context = %#v, want map", envelope.Payload["context"])
+			}
+			if contextPayload["agentId"] != "agent-openclaw" {
+				t.Fatalf("agentId = %#v, want agent-openclaw", contextPayload["agentId"])
+			}
+			return
+		}
+	}
+	t.Fatalf("missing health probe node.log in %#v", client.sent)
+}
+
 func TestParseDetectableAgentsFromACPXHelp(t *testing.T) {
 	t.Parallel()
 
@@ -679,6 +762,9 @@ func assertEnvelopeTypes(t *testing.T, envelopes []nodeclient.Envelope, want []s
 
 	got := make([]string, 0, len(envelopes))
 	for _, envelope := range envelopes {
+		if envelope.Type == "node.log" {
+			continue
+		}
 		got = append(got, envelope.Type)
 	}
 	if !slices.Equal(got, want) {

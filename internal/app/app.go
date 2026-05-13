@@ -52,6 +52,27 @@ func logf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "amesh-node %s %s\n", time.Now().UTC().Format(time.RFC3339), fmt.Sprintf(format, args...))
 }
 
+func sendNodeLog(ctx context.Context, client daemonClient, nodeID string, level string, message string, context map[string]any) {
+	if context == nil {
+		context = map[string]any{}
+	}
+	if err := client.Send(ctx, nodeclient.Envelope{
+		Type:      "node.log",
+		RequestID: fmt.Sprintf("log-%d", time.Now().UnixNano()),
+		Source:    nodeID,
+		Target:    "server",
+		Payload: map[string]any{
+			"nodeId":     nodeID,
+			"level":      level,
+			"message":    message,
+			"context":    context,
+			"observedAt": time.Now().UTC().Format(time.RFC3339),
+		},
+	}); err != nil {
+		logf("node log send failed node=%s error=%v", nodeID, err)
+	}
+}
+
 func (err retryableDaemonError) Error() string {
 	return err.err.Error()
 }
@@ -81,9 +102,35 @@ func run(ctx context.Context, args []string, update updateRunner, detect detectR
 		return update(ctx, os.Stdout, os.Stderr)
 	case "acp":
 		return runACPBridge(ctx, args[1:], os.Stdin, os.Stdout)
+	case "logs":
+		return runLogs(ctx, args[1:], os.Stdout, os.Stderr)
 	default:
 		return fmt.Errorf("unknown subcommand %q", args[0])
 	}
+}
+
+func runLogs(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	flags := flag.NewFlagSet("logs", flag.ContinueOnError)
+	serviceName := flags.String("service", "amesh-node", "systemd user service name")
+	lines := flags.Int("n", 200, "number of recent log lines")
+	follow := flags.Bool("follow", true, "follow new log lines")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if _, err := exec.LookPath("journalctl"); err != nil {
+		return fmt.Errorf("journalctl is required to read installed node logs: %w", err)
+	}
+	journalArgs := []string{"--user", "-u", *serviceName, "-n", fmt.Sprintf("%d", *lines), "--no-pager"}
+	if *follow {
+		journalArgs = append(journalArgs, "-f")
+	}
+	cmd := exec.CommandContext(ctx, "journalctl", journalArgs...)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("read node logs: %w", err)
+	}
+	return nil
 }
 
 func runACPBridge(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
@@ -979,6 +1026,11 @@ func runDaemonSession(
 	if err := syncHealthyCapabilities(ctx, client, nodeID, configPath, probe); err != nil {
 		return retryableDaemonError{err: err}
 	}
+	sendNodeLog(ctx, client, nodeID, "info", "node session resumed", map[string]any{
+		"serverUrl": serverURL,
+		"config":    configPath,
+		"version":   currentVersion(),
+	})
 
 	sessionCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -1000,17 +1052,37 @@ func runDaemonSession(
 		switch envelope.Type {
 		case "session.start", "session.input":
 			logf("session command node=%s type=%s session=%s", nodeID, envelope.Type, deref(envelope.SessionID))
+			sendNodeLog(sessionCtx, client, nodeID, "info", "session command received", map[string]any{
+				"type":      envelope.Type,
+				"sessionId": deref(envelope.SessionID),
+				"agentId":   envelope.Payload["agentId"],
+			})
 			if err := startSession(sessionCtx, client, runner, sessions, configPath, nodeID, envelope); err != nil {
+				sendNodeLog(sessionCtx, client, nodeID, "error", "session command failed", map[string]any{
+					"type":      envelope.Type,
+					"sessionId": deref(envelope.SessionID),
+					"error":     err.Error(),
+				})
 				return retryableDaemonError{err: err}
 			}
 		case "session.cancel":
 			logf("session cancel node=%s session=%s", nodeID, deref(envelope.SessionID))
+			sendNodeLog(sessionCtx, client, nodeID, "warn", "session cancel received", map[string]any{
+				"sessionId": deref(envelope.SessionID),
+			})
 			if err := cancelSession(sessionCtx, client, sessions, nodeID, envelope); err != nil {
 				return retryableDaemonError{err: err}
 			}
 		case "node.detect":
 			logf("detect command node=%s config=%s", nodeID, configPath)
+			sendNodeLog(sessionCtx, client, nodeID, "info", "agent detection started", map[string]any{
+				"config": configPath,
+			})
 			if err := detect(sessionCtx, configPath); err != nil {
+				sendNodeLog(sessionCtx, client, nodeID, "error", "agent detection failed", map[string]any{
+					"config": configPath,
+					"error":  err.Error(),
+				})
 				return fmt.Errorf("node detect failed: %w", err)
 			}
 			if err := syncHealthyCapabilities(sessionCtx, client, nodeID, configPath, probe); err != nil {
@@ -1030,8 +1102,14 @@ func runDaemonSession(
 				nextPaths = append(nextPaths, path)
 			}
 			if err := updateConfigPaths(configPath, nextPaths); err != nil {
+				sendNodeLog(sessionCtx, client, nodeID, "error", "path update failed", map[string]any{
+					"error": err.Error(),
+				})
 				return fmt.Errorf("node path update failed: %w", err)
 			}
+			sendNodeLog(sessionCtx, client, nodeID, "info", "node paths updated", map[string]any{
+				"paths": nextPaths,
+			})
 			if err := syncHealthyCapabilities(sessionCtx, client, nodeID, configPath, probe); err != nil {
 				return retryableDaemonError{err: err}
 			}
@@ -1057,7 +1135,11 @@ func runDaemonSession(
 			}
 		case "node.update":
 			logf("update command node=%s", nodeID)
+			sendNodeLog(sessionCtx, client, nodeID, "warn", "node update requested", nil)
 			if err := update(sessionCtx, os.Stdout, os.Stderr); err != nil {
+				sendNodeLog(sessionCtx, client, nodeID, "error", "node update failed", map[string]any{
+					"error": err.Error(),
+				})
 				return fmt.Errorf("node update failed: %w", err)
 			}
 			return nil
@@ -1078,6 +1160,25 @@ func syncHealthyCapabilities(
 	}
 	capabilities := capabilitiesWithStatus(ctx, configuredAgents(config), probe)
 	logf("capability sync node=%s config=%s configured=%d healthy=%d", nodeID, configPath, len(config.Agents), len(capabilities))
+	errorCount := 0
+	for _, capability := range capabilities {
+		if capability["status"] != "error" {
+			continue
+		}
+		errorCount++
+		sendNodeLog(ctx, client, nodeID, "error", "agent health probe failed", map[string]any{
+			"agentId":   capability["id"],
+			"agentName": capability["name"],
+			"acpxAgent": capability["acpxAgent"],
+			"error":     capability["error"],
+		})
+	}
+	sendNodeLog(ctx, client, nodeID, "info", "capability sync completed", map[string]any{
+		"config":     configPath,
+		"configured": len(config.Agents),
+		"healthy":    len(capabilities) - errorCount,
+		"errors":     errorCount,
+	})
 	return client.Send(ctx, nodeclient.Envelope{
 		Type:      "node.capabilities.sync",
 		RequestID: fmt.Sprintf("sync-%d", time.Now().UnixNano()),

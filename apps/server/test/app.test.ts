@@ -109,6 +109,54 @@ describe("server app", () => {
     socket.close();
   });
 
+  it("stores and returns node logs", async () => {
+    const socket = new WebSocket(`ws://${address}/ws?role=node&nodeId=node-1`);
+    await waitForOpen(socket);
+    socket.send(JSON.stringify(registerNode("node-1", "a")));
+    await readNodeMessage(socket);
+
+    socket.send(
+      JSON.stringify({
+        type: "node.log",
+        requestId: "log-1",
+        sessionId: null,
+        source: "node-1",
+        target: "server",
+        payload: {
+          nodeId: "node-1",
+          level: "error",
+          message: "agent health probe failed",
+          context: {
+            agentId: "agent-openclaw",
+            error: "ACP metadata is missing"
+          },
+          observedAt: "2026-05-13T18:00:00Z"
+        }
+      })
+    );
+    await waitForIdle();
+
+    const response = await injectAuthed(app, authCookie, {
+      method: "GET",
+      url: "/api/nodes/node-1/logs"
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      nodeId: "node-1",
+      entries: [
+        {
+          level: "error",
+          message: "agent health probe failed",
+          context: {
+            agentId: "agent-openclaw",
+            error: "ACP metadata is missing"
+          }
+        }
+      ]
+    });
+    socket.close();
+  });
+
   it("resolves the default sqlite path independently of process cwd", async () => {
     const originalCwd = process.cwd();
     const tempCwd = await mkdtemp(join(tmpdir(), "amesh-db-cwd-"));

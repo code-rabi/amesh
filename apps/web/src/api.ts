@@ -1,10 +1,11 @@
 import type {
   BrowserRealtimeEvent,
   BrowseNodeDirectoriesResponse,
+  NodeLogsResponse,
   TopologySnapshot,
   TriggerRule
 } from "@amesh/protocol";
-import { browseNodeDirectoriesResponseSchema } from "@amesh/protocol";
+import { browseNodeDirectoriesResponseSchema, nodeLogsResponseSchema } from "@amesh/protocol";
 
 import type { SessionSummary, SessionView } from "./types.js";
 
@@ -116,6 +117,15 @@ export async function fetchNodeDirectories(nodeId: string, path?: string): Promi
     throw new Error(body?.message ?? "Directory browse failed");
   }
   return browseNodeDirectoriesResponseSchema.parse(await response.json());
+}
+
+export async function fetchNodeLogs(nodeId: string): Promise<NodeLogsResponse> {
+  const response = await apiFetch(`/api/nodes/${nodeId}/logs`);
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(body?.message ?? "Log fetch failed");
+  }
+  return nodeLogsResponseSchema.parse(await response.json());
 }
 
 export async function createTriggerRule(input: {

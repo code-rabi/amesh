@@ -190,6 +190,29 @@ export type BrowseNodeDirectoriesResponse = z.infer<
   typeof browseNodeDirectoriesResponseSchema
 >;
 
+export const nodeLogLevelSchema = z.enum(["debug", "info", "warn", "error"]);
+export type NodeLogLevel = z.infer<typeof nodeLogLevelSchema>;
+
+export const nodeLogPayloadSchema = z.object({
+  nodeId: z.string(),
+  level: nodeLogLevelSchema.default("info"),
+  message: z.string(),
+  context: payloadSchema.default({}),
+  observedAt: z.string()
+});
+export type NodeLogPayload = z.infer<typeof nodeLogPayloadSchema>;
+
+export const nodeLogEntrySchema = nodeLogPayloadSchema.extend({
+  id: z.string()
+});
+export type NodeLogEntry = z.infer<typeof nodeLogEntrySchema>;
+
+export const nodeLogsResponseSchema = z.object({
+  nodeId: z.string(),
+  entries: z.array(nodeLogEntrySchema)
+});
+export type NodeLogsResponse = z.infer<typeof nodeLogsResponseSchema>;
+
 export const sessionStartPayloadSchema = z.object({
   sessionId: z.string(),
   agentId: z.string(),
@@ -273,6 +296,10 @@ export const browserRealtimeEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("topology.updated"),
     payload: topologySnapshotSchema
+  }),
+  z.object({
+    type: z.literal("node.logs.updated"),
+    payload: nodeLogsResponseSchema
   }),
   z.object({
     type: z.literal("session.updated"),

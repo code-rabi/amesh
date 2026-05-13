@@ -12,14 +12,14 @@ import (
 )
 
 func TestRunnerStreamsStdoutLineByLine(t *testing.T) {
-	t.Parallel()
-
 	var lines []string
-	command, args := helperCommand(t, "emit-lines")
+	command := "/bin/sh"
 	output, err := (Runner{}).Run(context.Background(), RunRequest{
 		Command: command,
-		Args:    args,
-		Env:     []string{"GO_WANT_HELPER_PROCESS=1"},
+		Args: []string{
+			"-c",
+			"printf '%s\n' one two; printf '%s\n' noise >&2",
+		},
 	}, func(line string) {
 		lines = append(lines, line)
 	})
