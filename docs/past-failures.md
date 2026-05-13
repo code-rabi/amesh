@@ -6,6 +6,12 @@
 - Cause: the installer used `node -p` with `process.stdout.write(...)`, and newer Node releases printed both the written major and the boolean return value, producing values like `24true`.
 - Mitigation: the installer now parses the major through a pure `node -p` expression and CI runs `scripts/test-install-amesh-node.sh` to cover both the Node 24 happy path and the invalid-parse failure path.
 
+## 2026-05-13: Installer crashed when piped into `bash`
+
+- Symptom: `curl .../install-amesh-node.sh | ... bash` failed at the end with `BASH_SOURCE[0]: unbound variable`.
+- Cause: the script ran under `set -u` and assumed `BASH_SOURCE[0]` exists, which is false when Bash reads the script from stdin instead of a file path.
+- Mitigation: the entrypoint guard now falls back to `$0` when `BASH_SOURCE` is unset, and `scripts/test-install-amesh-node.sh` now executes the installer through stdin to cover the real bootstrap shape.
+
 ## 2026-05-11: Server smoke drifted from browser auth
 
 - The smoke script still called browser-facing session and trigger APIs anonymously after the server moved those routes behind cookie auth.

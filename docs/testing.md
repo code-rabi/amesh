@@ -29,6 +29,7 @@
 - The server also covers invalid registration-token rejection, resume via durable reconnect token, trigger-rule deletion, and static dashboard serving from the control-plane deployable.
 - The server smoke command exercises node registration, direct chat, denied routing, and allowed cross-node routing in one local flow.
 - The GitHub Actions `CI` workflow runs the root JavaScript gate, the server smoke flow through that gate, Go tests, and shell syntax checks on pull requests and on pushes to `main`.
+- `scripts/test-install-amesh-node.sh` covers the installer's Node major parsing failure path and also executes the installer through stdin so the published `curl | bash` bootstrap shape stays working under `set -u`.
 - The GitHub Actions `CI` workflow also publishes dedicated `Knip` and `Sentrux` jobs so unused-code and architecture-rule regressions show up as separate status checks.
 - The web app owns UI coverage for topology rendering, session history recovery after refresh, and the dashboard `Detect agents`, `Update node`, and exposed-path actions.
 - The Go daemon owns table-driven tests for config loading, reconnect logic, update, detect, exposed-path command dispatch, and `acpx` process lifecycle including streamed output and cancellation.
