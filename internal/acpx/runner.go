@@ -74,6 +74,13 @@ func (Runner) Run(
 		if err := (Runner{}).Ensure(ctx, request); err != nil {
 			return nil, fmt.Errorf("ensure acpx session: %w", err)
 		}
+		output, err := runStreamingCommand(ctx, command, buildPromptArgs(request), request.WorkingDir, request.Env, request.Stdin, onStdoutLine)
+		if err == nil || request.Session == "" || !isMissingACPMetadataError(err) {
+			return output, err
+		}
+		if newErr := runCommand(ctx, command, buildSessionNewArgs(request), request.WorkingDir, request.Env, ""); newErr != nil {
+			return output, fmt.Errorf("%w; recreate acpx session after missing ACP metadata: %v", err, newErr)
+		}
 		return runStreamingCommand(ctx, command, buildPromptArgs(request), request.WorkingDir, request.Env, request.Stdin, onStdoutLine)
 	}
 
@@ -223,6 +230,7 @@ func runStreamingCommand(
 
 	var (
 		stdoutBuf bytes.Buffer
+		stderrBuf bytes.Buffer
 		mu        sync.Mutex
 		wg        sync.WaitGroup
 	)
@@ -246,16 +254,19 @@ func runStreamingCommand(
 	go func() {
 		defer wg.Done()
 		// Drain stderr so the child process never blocks on a full pipe.
-		// We intentionally discard the contents: acpx stderr is operator noise
-		// (banners, [acpx] tokens summary, http debug) and never carries protocol
-		// state. Surfacing it would let it leak into chat transcripts again.
-		_, _ = io.Copy(io.Discard, stderr)
+		// Keep it out of stdout/chat events, but retain it for errors because
+		// provider init failures such as OpenClaw's ACP metadata error arrive
+		// there.
+		_, _ = io.Copy(&stderrBuf, stderr)
 	}()
 
 	err = cmd.Wait()
 	wg.Wait()
 	output := stdoutBuf.Bytes()
 	if err != nil {
+		if stderrText := strings.TrimSpace(stderrBuf.String()); stderrText != "" {
+			return output, fmt.Errorf("run acpx: %w: %s", err, stderrText)
+		}
 		return output, fmt.Errorf("run acpx: %w", err)
 	}
 	return output, nil
