@@ -250,18 +250,82 @@ func detectAgents(ctx context.Context, runner acpx.Runner) []nodeconfig.AgentCon
 	detectedCandidates := detectInstalledAgents(candidates)
 	agents := make([]nodeconfig.AgentConfig, 0, len(candidates))
 	for _, candidate := range detectedCandidates {
+		env := detectedAgentEnv(candidate)
+		if candidate.ACPXAgent == "openclaw" {
+			var ok bool
+			env, ok = verifiedOpenClawEnv(ctx, runner, env)
+			if !ok {
+				continue
+			}
+		}
 		agent := nodeconfig.AgentConfig{
 			ID:        candidate.ID,
 			Name:      candidate.Name,
 			ACPXAgent: candidate.ACPXAgent,
 			Command:   defaultACPXCommand(),
 			Args:      []string{},
-			Env:       detectedAgentEnv(candidate),
+			Env:       env,
 			Labels:    []string{"detected"},
 		}
 		agents = append(agents, agent)
 	}
 	return agents
+}
+
+func verifiedOpenClawEnv(ctx context.Context, runner acpx.Runner, fallback map[string]string) (map[string]string, bool) {
+	candidateDirs := openClawPathDirs()
+	if len(candidateDirs) == 0 {
+		return nil, false
+	}
+
+	baseEntries := filepath.SplitList(os.Getenv("PATH"))
+	nodeDirs := lookPathDir("node")
+	for _, dir := range candidateDirs {
+		pathEntries := uniquePathEntries([]string{dir}, nodeDirs, baseEntries)
+		env := map[string]string{
+			"PATH": strings.Join(pathEntries, string(os.PathListSeparator)),
+		}
+		probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		err := runner.Ensure(probeCtx, acpx.RunRequest{
+			Command: defaultACPXCommand(),
+			Agent:   "openclaw",
+			Session: "amesh-detect-openclaw",
+			Env:     envList(env),
+		})
+		cancel()
+		if err == nil {
+			return env, true
+		}
+		log.Printf("openclaw ACP readiness probe failed for PATH prefix %s: %v", dir, err)
+	}
+
+	if len(fallback) > 0 {
+		return fallback, false
+	}
+	return nil, false
+}
+
+func openClawPathDirs() []string {
+	seen := map[string]struct{}{}
+	dirs := make([]string, 0)
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		dir = strings.TrimSpace(dir)
+		if dir == "" {
+			continue
+		}
+		path := filepath.Join(dir, "openclaw")
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() || info.Mode()&0o111 == 0 {
+			continue
+		}
+		clean := filepath.Clean(dir)
+		if _, ok := seen[clean]; ok {
+			continue
+		}
+		seen[clean] = struct{}{}
+		dirs = append(dirs, clean)
+	}
+	return dirs
 }
 
 func detectedAgentEnv(candidate detectableAgent) map[string]string {
