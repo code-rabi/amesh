@@ -215,6 +215,7 @@ main() {
   download_url="https://github.com/${REPO}/releases/download/${tag}/${asset}"
   install_dir="$(pick_install_dir)"
   binary_path="${BINARY_PATH:-$install_dir/amesh-node}"
+  cli_binary_path="${AMESH_CLI_PATH:-$install_dir/amesh}"
   tmp_dir="$(mktemp -d)"
   trap 'rm -rf "${tmp_dir}"' EXIT
 
@@ -233,12 +234,17 @@ main() {
   extract_archive "${tmp_dir}/${asset}" "${extract_dir}"
 
   binary_name="amesh-node"
+  cli_binary_name="amesh"
   if [ "${os}" = "windows" ]; then
     binary_name="amesh-node.exe"
+    cli_binary_name="amesh.exe"
   fi
 
   [ -f "${extract_dir}/${binary_name}" ] || fail "archive did not contain ${binary_name}"
   install -m 0755 "${extract_dir}/${binary_name}" "${binary_path}"
+  if [ -f "${extract_dir}/${cli_binary_name}" ]; then
+    install -m 0755 "${extract_dir}/${cli_binary_name}" "${cli_binary_path}"
+  fi
 
   if command -v systemctl >/dev/null 2>&1; then
     systemctl --user stop "$SERVICE_NAME" >/dev/null 2>&1 || true
@@ -319,6 +325,9 @@ EOF
   fi
 
   log "installed ${binary_path}"
+  if [ -x "${cli_binary_path}" ]; then
+    log "installed ${cli_binary_path}"
+  fi
   log "managed acpx: ${ACPX_BIN}"
   log "state: ${STATE_PATH}"
 }

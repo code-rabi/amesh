@@ -8,6 +8,8 @@ import type {
   NodeDirectoryBrowsePayload,
   NodeDirectoryBrowseResultPayload,
   NodeHeartbeatPayload,
+  NodeLogEntry,
+  NodeLogPayload,
   NodePathsUpdatePayload,
   NodeRegistrationPayload,
   NodeResumePayload,
@@ -29,6 +31,8 @@ import {
   nodeDirectoryBrowsePayloadSchema,
   nodeDirectoryBrowseResultPayloadSchema,
   nodeHeartbeatPayloadSchema,
+  nodeLogPayloadSchema,
+  nodeLogsResponseSchema,
   nodePathsUpdatePayloadSchema,
   nodeRegistrationPayloadSchema,
   nodeResumePayloadSchema,
@@ -76,6 +80,24 @@ type NodeSocket = {
   send: (message: ProtocolEnvelope) => void;
 };
 
+class NodeLogStore {
+  private readonly entries = new Map<string, NodeLogEntry[]>();
+
+  append(input: NodeLogPayload) {
+    const entry: NodeLogEntry = {
+      id: nanoid(14),
+      ...input
+    };
+    const entries = [...(this.entries.get(input.nodeId) ?? []), entry].slice(-300);
+    this.entries.set(input.nodeId, entries);
+    return entry;
+  }
+
+  list(nodeId: string) {
+    return [...(this.entries.get(nodeId) ?? [])];
+  }
+}
+
 type AppRouteDeps = {
   app: ReturnType<typeof Fastify>;
   authConfig: ReturnType<typeof resolveAuthConfig>;
@@ -96,6 +118,7 @@ type AppRouteDeps = {
   broadcastTopology: () => Promise<void>;
   broadcastSession: (sessionId: string) => Promise<void>;
   sendToNode: (nodeId: string, envelope: ProtocolEnvelope) => void;
+  nodeLogs: NodeLogStore;
 };
 
 function websocketSend(socket: WebSocket, payload: unknown) {
@@ -122,6 +145,7 @@ export function buildApp(options: AppOptions = {}) {
   const browserSockets = new Set<WebSocket>();
   const nodeSockets = new Map<string, NodeSocket>();
   const nodeVersions = new Map<string, string | null>();
+  const nodeLogs = new NodeLogStore();
   const pendingDirectoryBrowses = new Map<
     string,
     {
@@ -217,6 +241,19 @@ export function buildApp(options: AppOptions = {}) {
   async function broadcastSession(sessionId: string) {
     const event = repository.sessionUpdatedEvent(sessionId);
     const message = browserRealtimeEventSchema.parse(event);
+    for (const socket of browserSockets) {
+      websocketSend(socket, message);
+    }
+  }
+
+  function broadcastNodeLogs(nodeId: string) {
+    const message = browserRealtimeEventSchema.parse({
+      type: "node.logs.updated",
+      payload: nodeLogsResponseSchema.parse({
+        nodeId,
+        entries: nodeLogs.list(nodeId)
+      })
+    });
     for (const socket of browserSockets) {
       websocketSend(socket, message);
     }
@@ -374,6 +411,12 @@ export function buildApp(options: AppOptions = {}) {
             ) as NodeHeartbeatPayload;
             repository.heartbeat(payload.nodeId, payload.observedAt);
             void broadcastTopology();
+            break;
+          }
+          case "node.log": {
+            const payload = nodeLogPayloadSchema.parse(envelope.payload) as NodeLogPayload;
+            nodeLogs.append(payload);
+            broadcastNodeLogs(payload.nodeId);
             break;
           }
           case "node.capabilities.sync": {
@@ -556,7 +599,8 @@ export function buildApp(options: AppOptions = {}) {
     topologySnapshot,
     broadcastTopology,
     broadcastSession,
-    sendToNode
+    sendToNode,
+    nodeLogs
   });
 
   app.server.on("upgrade", (request, socket, head) => {
@@ -627,7 +671,8 @@ function registerApiRoutes({
   topologySnapshot,
   broadcastTopology,
   broadcastSession,
-  sendToNode
+  sendToNode,
+  nodeLogs
 }: AppRouteDeps) {
   app.get("/api/auth/session", async (request: FastifyRequest) => ({
     authenticated: isAuthenticated(request.cookies[authConfig.cookieName]),
@@ -663,6 +708,13 @@ function registerApiRoutes({
     repository.listTopology().triggerRules
   );
   app.get("/api/topology", { preHandler: requireBrowserAuth }, async () => topologySnapshot());
+  app.get("/api/nodes/:nodeId/logs", { preHandler: requireBrowserAuth }, async (request: FastifyRequest) => {
+    const params = request.params as { nodeId: string };
+    return nodeLogsResponseSchema.parse({
+      nodeId: params.nodeId,
+      entries: nodeLogs.list(params.nodeId)
+    });
+  });
   app.post("/api/nodes/:nodeId/update", { preHandler: requireBrowserAuth }, async (request: FastifyRequest, reply: FastifyReply) =>
     triggerNodeAction(request, reply, repository, nodeSockets, sendToNode, "update")
   );

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { TopologySnapshot } from "@amesh/protocol";
+import type { NodeLogEntry, TopologySnapshot } from "@amesh/protocol";
 
 import { connectRealtime, fetchTopology } from "../api.js";
 
@@ -9,6 +9,7 @@ export type ConnectionState = "loading" | "connected" | "disconnected";
 
 export function useTopologyStore() {
   const [topology, setTopology] = useState<TopologySnapshot>(empty);
+  const [nodeLogs, setNodeLogs] = useState<Record<string, NodeLogEntry[]>>({});
   const [connection, setConnection] = useState<ConnectionState>("loading");
   const refetchRef = useRef<() => void>(() => {});
 
@@ -37,6 +38,12 @@ export function useTopologyStore() {
         if (event.type === "topology.snapshot" || event.type === "topology.updated") {
           setTopology(event.payload);
         }
+        if (event.type === "node.logs.updated") {
+          setNodeLogs((current) => ({
+            ...current,
+            [event.payload.nodeId]: event.payload.entries
+          }));
+        }
       });
       socket.onopen = () => active && setConnection("connected");
       socket.onerror = () => active && setConnection("disconnected");
@@ -53,6 +60,8 @@ export function useTopologyStore() {
 
   return {
     topology,
+    nodeLogs,
+    setNodeLogs,
     connection,
     refresh: () => refetchRef.current()
   };

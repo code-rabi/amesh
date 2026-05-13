@@ -9,6 +9,7 @@ import { AppSidebar } from "./components/AppSidebar.js";
 import { ErrorBanner } from "./components/ErrorBanner.js";
 import { TopBar } from "./components/TopBar.js";
 import { useTopology } from "./lib/topologyContext.js";
+import { LogsRoute } from "./routes/LogsRoute.js";
 import { SessionsRoute } from "./routes/SessionsRoute.js";
 import { TopologyRoute } from "./routes/TopologyRoute.js";
 
@@ -62,7 +63,13 @@ const sessionsRoute = createRoute({
   component: SessionsRoute
 });
 
-const routeTree = rootRoute.addChildren([topologyRoute, sessionsRoute]);
+const logsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/logs",
+  component: LogsRoute
+});
+
+const routeTree = rootRoute.addChildren([topologyRoute, sessionsRoute, logsRoute]);
 
 export const router = createRouter({ routeTree });
 

@@ -15,11 +15,12 @@ func TestRunnerStreamsStdoutLineByLine(t *testing.T) {
 	t.Parallel()
 
 	var lines []string
-	command, args := helperCommand(t, "emit-lines")
+	command := writeHelperExecutable(t, `#!/bin/sh
+printf '%s\n' one two
+printf '%s\n' noise >&2
+`)
 	output, err := (Runner{}).Run(context.Background(), RunRequest{
 		Command: command,
-		Args:    args,
-		Env:     []string{"GO_WANT_HELPER_PROCESS=1"},
 	}, func(line string) {
 		lines = append(lines, line)
 	})
@@ -267,4 +268,14 @@ func helperCommand(t *testing.T, mode string) (string, []string) {
 	t.Helper()
 
 	return os.Args[0], []string{"-test.run=TestRunnerHelperProcess", "--", mode}
+}
+
+func writeHelperExecutable(t *testing.T, contents string) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "helper")
+	if err := os.WriteFile(path, []byte(contents), 0o755); err != nil {
+		t.Fatalf("write helper executable: %v", err)
+	}
+	return path
 }
