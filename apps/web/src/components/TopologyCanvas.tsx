@@ -54,11 +54,66 @@ function CanvasInner({ topology }: Props) {
   const [edges, setEdges, onEdgesChange] = useEdgesState<TriggerEdgeRecord>([]);
   const positionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const [toast, setToast] = useState<string | null>(null);
+  const [connectionSourceAgentId, setConnectionSourceAgentId] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
 
   const agentsById = useMemo(
     () => new Map(topology.agents.map((agent) => [agent.id, agent])),
     [topology.agents]
+  );
+  const connectionSourceAgentName =
+    connectionSourceAgentId ? agentsById.get(connectionSourceAgentId)?.name ?? null : null;
+
+  const createAllowRule = useCallback(
+    async (sourceAgentId: string, targetAgentId: string) => {
+      if (sourceAgentId === targetAgentId) {
+        showToast("An agent cannot trigger itself.");
+        return false;
+      }
+
+      const existing = topology.triggerRules.find(
+        (rule) =>
+          rule.sourceAgentId === sourceAgentId && rule.targetAgentId === targetAgentId
+      );
+      if (existing && existing.mode === "allow") {
+        showToast("Already connected. Click the edge to change.");
+        return false;
+      }
+
+      try {
+        await createTriggerRule({
+          sourceAgentId,
+          targetAgentId,
+          mode: "allow"
+        });
+        return true;
+      } catch {
+        showToast("Could not create rule.");
+        return false;
+      }
+    },
+    [topology.triggerRules]
+  );
+
+  const pickConnectionEndpoint = useCallback(
+    async (agent: TopologySnapshot["agents"][number]) => {
+      if (!connectionSourceAgentId) {
+        setConnectionSourceAgentId(agent.id);
+        showToast(`Pick a target for ${agent.name}.`);
+        return;
+      }
+      if (connectionSourceAgentId === agent.id) {
+        setConnectionSourceAgentId(null);
+        showToast("Connection cancelled.");
+        return;
+      }
+      const created = await createAllowRule(connectionSourceAgentId, agent.id);
+      if (created) {
+        setConnectionSourceAgentId(null);
+        showToast("Rule created.");
+      }
+    },
+    [connectionSourceAgentId, createAllowRule]
   );
 
   useEffect(() => {
@@ -88,7 +143,15 @@ function CanvasInner({ topology }: Props) {
           id: node.id,
           type: "nodeCard",
           position,
-          data: { data: { node, agents } } as { data: NodeCardData },
+          data: {
+            data: {
+              node,
+              agents,
+              connectionSourceAgentId,
+              connectionSourceAgentName,
+              onConnectionPick: pickConnectionEndpoint
+            }
+          } as { data: NodeCardData },
           draggable: true
         };
       });
@@ -107,7 +170,13 @@ function CanvasInner({ topology }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [topology, setNodes]);
+  }, [
+    topology,
+    setNodes,
+    connectionSourceAgentId,
+    connectionSourceAgentName,
+    pickConnectionEndpoint
+  ]);
 
   function showToast(message: string) {
     setToast(message);
@@ -178,31 +247,9 @@ function CanvasInner({ topology }: Props) {
       const sourceAgentId = params.sourceHandle;
       const targetAgentId = params.targetHandle;
       if (!sourceAgentId || !targetAgentId) return;
-      if (sourceAgentId === targetAgentId) {
-        showToast("An agent cannot trigger itself.");
-        return;
-      }
-
-      const existing = topology.triggerRules.find(
-        (rule) =>
-          rule.sourceAgentId === sourceAgentId && rule.targetAgentId === targetAgentId
-      );
-      if (existing && existing.mode === "allow") {
-        showToast("Already connected. Click the edge to change.");
-        return;
-      }
-
-      try {
-        await createTriggerRule({
-          sourceAgentId,
-          targetAgentId,
-          mode: "allow"
-        });
-      } catch {
-        showToast("Could not create rule.");
-      }
+      await createAllowRule(sourceAgentId, targetAgentId);
     },
-    [topology.triggerRules]
+    [createAllowRule]
   );
 
   const isValidConnection: IsValidConnection = useCallback((connection) => {
