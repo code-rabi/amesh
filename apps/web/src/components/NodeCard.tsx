@@ -1,5 +1,6 @@
 import { Handle, Position } from "@xyflow/react";
 import { useNavigate } from "@tanstack/react-router";
+import { ArrowRight } from "lucide-react";
 
 import type { AgentRecord, AgentStatus, NodeRecord, NodeStatus } from "@amesh/protocol";
 import { relativeTime } from "../lib/time.js";
@@ -8,6 +9,9 @@ import { NodeSettingsButton } from "./NodeSettingsButton.js";
 export type NodeCardData = {
   node: NodeRecord;
   agents: AgentRecord[];
+  connectionSourceAgentId: string | null;
+  connectionSourceAgentName: string | null;
+  onConnectionPick: (agent: AgentRecord) => void;
 };
 
 type NodeCardProps = {
@@ -29,7 +33,13 @@ function agentStatusLabel(status: AgentStatus) {
 }
 
 export function NodeCard({ data }: NodeCardProps) {
-  const { node, agents } = data.data;
+  const {
+    node,
+    agents,
+    connectionSourceAgentId,
+    connectionSourceAgentName,
+    onConnectionPick
+  } = data.data;
   const isOffline = node.status === "offline";
   const navigate = useNavigate();
 
@@ -62,8 +72,24 @@ export function NodeCard({ data }: NodeCardProps) {
         <ul className="node-card__agents">
           {agents.map((agent) => {
             const chatDisabled = isOffline || agent.status !== "online";
+            const connectionSelected = connectionSourceAgentId === agent.id;
+            const connectionDisabled = isOffline || agent.status !== "online";
+            const connectionLabel = connectionSourceAgentId
+              ? connectionSelected
+                ? `Cancel connection from ${agent.name}`
+                : `Connect ${connectionSourceAgentName ?? "selected agent"} to ${agent.name}`
+              : `Start connection from ${agent.name}`;
+            const connectionActionLabel = connectionSourceAgentId
+              ? connectionSelected
+                ? "Cancel"
+                : "Target"
+              : "Link";
             return (
-              <li key={agent.id} className="node-card__agent">
+              <li
+                key={agent.id}
+                className="node-card__agent"
+                data-link-source={connectionSelected ? "true" : undefined}
+              >
                 <div>
                   <div className="node-card__agent-name">{agent.name}</div>
                   <div className="node-card__agent-id">{agent.id}</div>
@@ -72,6 +98,23 @@ export function NodeCard({ data }: NodeCardProps) {
                   ) : null}
                 </div>
                 <div className="node-card__agent-tail">
+                  <button
+                    type="button"
+                    className="node-card__connect"
+                    title={connectionDisabled ? "Agent is not online" : connectionLabel}
+                    aria-label={connectionLabel}
+                    aria-pressed={connectionSelected}
+                    disabled={connectionDisabled}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (connectionDisabled) return;
+                      onConnectionPick(agent);
+                    }}
+                  >
+                    <ArrowRight size={13} aria-hidden />
+                    <span>{connectionActionLabel}</span>
+                  </button>
                   <button
                     type="button"
                     className="node-card__chat"

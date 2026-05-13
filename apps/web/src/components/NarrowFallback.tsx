@@ -1,18 +1,43 @@
+import { useMemo, useState } from "react";
 import type { TopologySnapshot } from "@amesh/protocol";
+import { ArrowRight } from "lucide-react";
 
+import { createTriggerRule } from "../api.js";
 import { relativeTime } from "../lib/time.js";
 import { NodeSettingsButton } from "./NodeSettingsButton.js";
 
 type Props = { topology: TopologySnapshot };
 
 export function NarrowFallback({ topology }: Props) {
-  const agentsById = new Map(topology.agents.map((agent) => [agent.id, agent]));
+  const [connectionSourceAgentId, setConnectionSourceAgentId] = useState<string | null>(null);
+  const agentsById = useMemo(
+    () => new Map(topology.agents.map((agent) => [agent.id, agent])),
+    [topology.agents]
+  );
+  const connectionSourceAgentName =
+    connectionSourceAgentId ? agentsById.get(connectionSourceAgentId)?.name ?? null : null;
+
+  async function pickConnectionEndpoint(agentId: string) {
+    if (!connectionSourceAgentId) {
+      setConnectionSourceAgentId(agentId);
+      return;
+    }
+    if (connectionSourceAgentId === agentId) {
+      setConnectionSourceAgentId(null);
+      return;
+    }
+    await createTriggerRule({
+      sourceAgentId: connectionSourceAgentId,
+      targetAgentId: agentId,
+      mode: "allow"
+    });
+    setConnectionSourceAgentId(null);
+  }
 
   return (
     <div className="narrow-fallback">
       <div className="note">
-        Drag-to-connect needs a wider screen. Open amesh on a desktop (≥1024px) to add or remove
-        rules on the canvas. This view is read-only.
+        Compact topology view. Use the arrow controls on online agents to create allow rules.
       </div>
 
       {topology.nodes.length === 0 ? (
@@ -47,8 +72,35 @@ export function NarrowFallback({ topology }: Props) {
             ) : (
               <ul className="rules">
                 {agents.map((agent) => (
-                  <li key={agent.id}>
+                  <li
+                    key={agent.id}
+                    data-link-source={connectionSourceAgentId === agent.id ? "true" : undefined}
+                  >
                     {agent.name} <span className="host">({agent.status})</span>
+                    {" "}
+                    <button
+                      type="button"
+                      className="narrow-card__connect"
+                      aria-label={
+                        connectionSourceAgentId
+                          ? connectionSourceAgentId === agent.id
+                            ? `Cancel connection from ${agent.name}`
+                            : `Connect ${connectionSourceAgentName ?? "selected agent"} to ${agent.name}`
+                          : `Start connection from ${agent.name}`
+                      }
+                      aria-pressed={connectionSourceAgentId === agent.id}
+                      disabled={node.status !== "online" || agent.status !== "online"}
+                      onClick={() => void pickConnectionEndpoint(agent.id)}
+                    >
+                      <ArrowRight size={13} aria-hidden />
+                      <span>
+                        {connectionSourceAgentId
+                          ? connectionSourceAgentId === agent.id
+                            ? "Cancel"
+                            : "Target"
+                          : "Link"}
+                      </span>
+                    </button>
                     {typeof agent.capabilities.cwd === "string" ? (
                       <>
                         {" "}
