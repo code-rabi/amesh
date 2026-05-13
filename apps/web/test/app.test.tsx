@@ -49,6 +49,7 @@ let updateRequests = 0;
 let detectRequests = 0;
 let pathRequests = 0;
 let directoryRequests = 0;
+let triggerRuleRequests: Array<{ sourceAgentId: string; targetAgentId: string; mode: string }> = [];
 let narrowLayout = false;
 let updateRequired = true;
 let sessionViews: Record<string, TestSessionView> = {};
@@ -187,8 +188,20 @@ beforeEach(() => {
         return response({
           nodes: topologyNodes.map((node) => ({ ...node, updateRequired })),
           agents: topologyAgents,
-          triggerRules: []
+          triggerRules: triggerRuleRequests.map((rule, index) => ({
+            id: `rule-${index + 1}`,
+            ...rule
+          }))
         });
+      }
+      if (parsed.pathname.endsWith("/api/trigger-rules") && init?.method === "POST") {
+        const payload = JSON.parse(String(init.body ?? "{}")) as {
+          sourceAgentId: string;
+          targetAgentId: string;
+          mode: string;
+        };
+        triggerRuleRequests.push(payload);
+        return response({ id: `rule-${triggerRuleRequests.length}`, ...payload });
       }
       return response({});
     })
@@ -198,6 +211,7 @@ beforeEach(() => {
   detectRequests = 0;
   pathRequests = 0;
   directoryRequests = 0;
+  triggerRuleRequests = [];
   narrowLayout = false;
   updateRequired = true;
   sessionViews = {};
@@ -451,9 +465,83 @@ describe("App shell", () => {
     render(<App />);
 
     await waitFor(() =>
-      expect(screen.getByText(/drag-to-connect needs a wider screen/i)).toBeTruthy()
+      expect(screen.getByText(/compact topology view/i)).toBeTruthy()
     );
     expect(screen.queryByRole("button", { name: /update lab-01/i })).toBeNull();
+  });
+
+  it("creates a cross-node allow rule from visible agent connection buttons", async () => {
+    topologyAgents = [
+      {
+        id: "agent-openclaw",
+        nodeId: "node-1",
+        name: "OpenClaw",
+        backend: "acpx",
+        status: "online",
+        capabilities: {
+          acpxAgent: "openclaw"
+        }
+      },
+      {
+        id: "agent-codex",
+        nodeId: "node-2",
+        name: "Codex",
+        backend: "acpx",
+        status: "online",
+        capabilities: {
+          acpxAgent: "codex"
+        }
+      }
+    ];
+    topologyNodes = [
+      {
+        id: "node-1",
+        name: "lab-01",
+        host: "lab-01.local",
+        status: "online",
+        labels: [],
+        paths: [],
+        registeredAt: "",
+        lastSeenAt: null,
+        version: "v0.1.1",
+        latestVersion: "v0.1.1",
+        updateRequired: false
+      },
+      {
+        id: "node-2",
+        name: "lab-02",
+        host: "lab-02.local",
+        status: "online",
+        labels: [],
+        paths: [],
+        registeredAt: "",
+        lastSeenAt: null,
+        version: "v0.1.1",
+        latestVersion: "v0.1.1",
+        updateRequired: false
+      }
+    ];
+    narrowLayout = true;
+    window.history.pushState({}, "", "/");
+    render(<App />);
+
+    await waitFor(
+      () =>
+        expect(screen.getByRole("button", { name: /start connection from openclaw/i })).toBeTruthy(),
+      { timeout: 3000 }
+    );
+    fireEvent.click(screen.getByRole("button", { name: /start connection from openclaw/i }));
+    fireEvent.click(screen.getByRole("button", { name: /connect openclaw to codex/i }));
+
+    await waitFor(() =>
+      expect(triggerRuleRequests).toEqual([
+        {
+          sourceAgentId: "agent-openclaw",
+          targetAgentId: "agent-codex",
+          mode: "allow"
+        }
+      ])
+    );
   });
 
   it("lets the sessions rail switch between exposed folders on a node", async () => {
