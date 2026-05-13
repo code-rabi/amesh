@@ -1,11 +1,11 @@
 import { WebSocket } from "ws";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AddressInfo } from "node:net";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { buildApp } from "../src/app.js";
+import { buildApp, defaultDbPath } from "../src/app.js";
 
 describe("server app", () => {
   let app: ReturnType<typeof buildApp>;
@@ -107,6 +107,30 @@ describe("server app", () => {
     expect(agentsResponse.statusCode).toBe(200);
     expect(agentsResponse.json()).toHaveLength(1);
     socket.close();
+  });
+
+  it("resolves the default sqlite path independently of process cwd", async () => {
+    const originalCwd = process.cwd();
+    const tempCwd = await mkdtemp(join(tmpdir(), "amesh-db-cwd-"));
+    process.chdir(tempCwd);
+
+    try {
+      const dbFile = defaultDbPath();
+      const isolatedApp = buildApp({
+        authPassword: "secret-pass",
+        authSecret: "test-secret",
+        latestNodeVersion: "v0.1.1"
+      });
+      await isolatedApp.close();
+
+      expect(dbFile).toContain("/apps/server/data/amesh.sqlite");
+      await access(dbFile);
+      await rm(dbFile, { force: true });
+      await rm(`${dbFile}-shm`, { force: true });
+      await rm(`${dbFile}-wal`, { force: true });
+    } finally {
+      process.chdir(originalCwd);
+    }
   });
 
   it("keeps a node in topology even when it advertises zero agents", async () => {

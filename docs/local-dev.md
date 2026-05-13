@@ -27,6 +27,7 @@ sh -n scripts/install-amesh-node.sh
 ## Notes
 
 - The control plane stores SQLite data under `apps/server/data/`.
+- The server resolves that default SQLite path from the server package root, not from the current working directory. In the Docker image, the persistent mount target is `/app/apps/server/data`.
 - `corepack pnpm dev` starts both the control-plane server and the web app from the repo root.
 - Example env files live at `apps/server/.env.example` and `apps/web/.env.example`. Copy them to `apps/server/.env` and `apps/web/.env` when you want package-local settings.
 - In local development, the Vite app proxies `/api` and `/ws` to the control plane on `localhost:3001`, so the browser should be opened on the Vite origin instead of calling the server origin directly.

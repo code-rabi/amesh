@@ -12,6 +12,12 @@
 - Cause: the script ran under `set -u` and assumed `BASH_SOURCE[0]` exists, which is false when Bash reads the script from stdin instead of a file path.
 - Mitigation: the entrypoint guard now falls back to `$0` when `BASH_SOURCE` is unset, and `scripts/test-install-amesh-node.sh` now executes the installer through stdin to cover the real bootstrap shape.
 
+## 2026-05-13: Docker deployments could mount the documented SQLite folder and still lose data
+
+- Symptom: operators mounted `/app/apps/server/data` in the control-plane container, but SQLite state still disappeared on redeploy.
+- Cause: the server defaulted to a relative DB path and `pnpm --filter @amesh/server start` ran with cwd `/app/apps/server`, so the actual live DB landed under `/app/apps/server/apps/server/data/amesh.sqlite`.
+- Mitigation: the server now resolves its default SQLite path from the server package location instead of `process.cwd()`, and a Vitest case covers that default path against a changed cwd.
+
 ## 2026-05-11: Server smoke drifted from browser auth
 
 - The smoke script still called browser-facing session and trigger APIs anonymously after the server moved those routes behind cookie auth.
