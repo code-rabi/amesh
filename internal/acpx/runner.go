@@ -1,7 +1,6 @@
 package acpx
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -204,14 +203,17 @@ func runStreamingCommand(
 	cmd := exec.CommandContext(ctx, command, args...)
 	cmd.Dir = workingDir
 	cmd.Env = append(cmd.Environ(), env...)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, fmt.Errorf("open stdout pipe: %w", err)
+
+	var (
+		stdoutBuf bytes.Buffer
+		stderrBuf bytes.Buffer
+	)
+	stdoutWriter := &lineStreamingWriter{
+		output:       &stdoutBuf,
+		onStdoutLine: onStdoutLine,
 	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return nil, fmt.Errorf("open stderr pipe: %w", err)
-	}
+	cmd.Stdout = stdoutWriter
+	cmd.Stderr = &stderrBuf
 
 	if stdinText != "" {
 		stdin, err := cmd.StdinPipe()
@@ -228,41 +230,9 @@ func runStreamingCommand(
 		return nil, fmt.Errorf("start acpx: %w", err)
 	}
 
-	var (
-		stdoutBuf bytes.Buffer
-		stderrBuf bytes.Buffer
-		mu        sync.Mutex
-		wg        sync.WaitGroup
-	)
-
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		scanner := bufio.NewScanner(stdout)
-		scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
-		for scanner.Scan() {
-			line := scanner.Bytes()
-			mu.Lock()
-			stdoutBuf.Write(line)
-			stdoutBuf.WriteByte('\n')
-			mu.Unlock()
-			if onStdoutLine != nil {
-				onStdoutLine(string(line))
-			}
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		// Drain stderr so the child process never blocks on a full pipe.
-		// Keep it out of stdout/chat events, but retain it for errors because
-		// provider init failures such as OpenClaw's ACP metadata error arrive
-		// there.
-		_, _ = io.Copy(&stderrBuf, stderr)
-	}()
-
-	err = cmd.Wait()
-	wg.Wait()
-	output := stdoutBuf.Bytes()
+	err := cmd.Wait()
+	stdoutWriter.Flush()
+	output := append([]byte(nil), stdoutBuf.Bytes()...)
 	if err != nil {
 		if stderrText := strings.TrimSpace(stderrBuf.String()); stderrText != "" {
 			return output, fmt.Errorf("run acpx: %w: %s", err, stderrText)
@@ -270,4 +240,53 @@ func runStreamingCommand(
 		return output, fmt.Errorf("run acpx: %w", err)
 	}
 	return output, nil
+}
+
+type lineStreamingWriter struct {
+	mu           sync.Mutex
+	output       *bytes.Buffer
+	pending      []byte
+	onStdoutLine func(line string)
+}
+
+func (writer *lineStreamingWriter) Write(chunk []byte) (int, error) {
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+
+	written := len(chunk)
+	if _, err := writer.output.Write(chunk); err != nil {
+		return 0, err
+	}
+
+	for len(chunk) > 0 {
+		index := bytes.IndexByte(chunk, '\n')
+		if index == -1 {
+			writer.pending = append(writer.pending, chunk...)
+			break
+		}
+		line := append(writer.pending, chunk[:index]...)
+		writer.pending = writer.pending[:0]
+		writer.emitLocked(line)
+		chunk = chunk[index+1:]
+	}
+
+	return written, nil
+}
+
+func (writer *lineStreamingWriter) Flush() {
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+
+	if len(writer.pending) == 0 {
+		return
+	}
+	writer.emitLocked(writer.pending)
+	writer.pending = nil
+}
+
+func (writer *lineStreamingWriter) emitLocked(line []byte) {
+	if writer.onStdoutLine == nil {
+		return
+	}
+	writer.onStdoutLine(string(line))
 }
