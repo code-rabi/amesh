@@ -6,7 +6,7 @@ import {
   useMessage
 } from "@assistant-ui/react";
 import { MarkdownTextPrimitive } from "@assistant-ui/react-markdown";
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 import type { AgentRecord, TopologySnapshot } from "@amesh/protocol";
 
 import { AgentAvatar } from "./AgentAvatar.js";
@@ -37,6 +37,14 @@ export function AssistantChat({
 }: Props) {
   const { runtime, sendError, clearSendError } = useAmeshThreadRuntime(activeAgent, sessionTarget);
   const [showAcp, setShowAcp] = useState(false);
+  const messageComponents = useMemo(
+    () => ({
+      UserMessage,
+      AssistantMessage: makeAssistantMessage(activeAgent, topology),
+      SystemMessage
+    }),
+    [activeAgent, topology]
+  );
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
@@ -63,13 +71,7 @@ export function AssistantChat({
 
           <ThreadPrimitive.Root className="chat__thread">
             <ThreadPrimitive.Viewport className="chat__viewport" autoScroll>
-              <ThreadPrimitive.Messages
-                components={{
-                  UserMessage,
-                  AssistantMessage: makeAssistantMessage(activeAgent, topology),
-                  SystemMessage
-                }}
-              />
+              <ThreadPrimitive.Messages components={messageComponents} />
             </ThreadPrimitive.Viewport>
 
             {sendError ? (

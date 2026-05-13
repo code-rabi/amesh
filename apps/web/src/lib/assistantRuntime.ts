@@ -331,11 +331,8 @@ export function useAmeshThreadRuntime(
 
   const clearSendError = useCallback(() => setSendError(null), []);
 
-  const adapter: ExternalStoreAdapter<ThreadMessageLike> = {
-    messages,
-    isRunning,
-    convertMessage: (msg) => msg,
-    onNew: async ({ content }) => {
+  const onNew = useCallback<ExternalStoreAdapter<ThreadMessageLike>["onNew"]>(
+    async ({ content }) => {
       const text = content
         .map((part) => (part.type === "text" ? part.text : ""))
         .join("")
@@ -363,8 +360,19 @@ export function useAmeshThreadRuntime(
         setSendError(message);
         throw cause;
       }
-    }
-  };
+    },
+    [activeAgent, sessionTarget, sessionView, sessions]
+  );
+
+  const adapter = useMemo<ExternalStoreAdapter<ThreadMessageLike>>(
+    () => ({
+      messages,
+      isRunning,
+      convertMessage: (msg) => msg,
+      onNew
+    }),
+    [isRunning, messages, onNew]
+  );
 
   const runtime = useExternalStoreRuntime(adapter);
 

@@ -40,6 +40,16 @@ func (Runner) Ensure(ctx context.Context, request RunRequest) error {
 	if err := ensureCompatibleConfig(); err != nil {
 		return err
 	}
+	err := runCommand(ctx, command, buildEnsureArgs(request), request.WorkingDir, request.Env, "")
+	if err == nil {
+		return nil
+	}
+	if request.Session == "" || !isMissingACPMetadataError(err) {
+		return err
+	}
+	if newErr := runCommand(ctx, command, buildSessionNewArgs(request), request.WorkingDir, request.Env, ""); newErr != nil {
+		return fmt.Errorf("%w; recreate acpx session after missing ACP metadata: %v", err, newErr)
+	}
 	return runCommand(ctx, command, buildEnsureArgs(request), request.WorkingDir, request.Env, "")
 }
 
@@ -118,6 +128,24 @@ func buildEnsureArgs(request RunRequest) []string {
 		args = append(args, "--name", request.Session)
 	}
 	return args
+}
+
+func buildSessionNewArgs(request RunRequest) []string {
+	args := append([]string{}, request.Args...)
+	if request.WorkingDir != "" {
+		args = append(args, "--cwd", request.WorkingDir)
+	}
+	args = append(args, request.Agent, "sessions", "new")
+	if request.Session != "" {
+		args = append(args, "--name", request.Session)
+	}
+	return args
+}
+
+func isMissingACPMetadataError(err error) bool {
+	message := err.Error()
+	return strings.Contains(message, "ACP_SESSION_INIT_FAILED") &&
+		strings.Contains(message, "ACP metadata is missing")
 }
 
 func buildPromptArgs(request RunRequest) []string {
