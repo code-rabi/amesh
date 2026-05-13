@@ -1,5 +1,11 @@
 # Past Failures
 
+## 2026-05-12: Installer rejected valid Node 24 runtimes
+
+- Symptom: remote bootstrap failed early with `could not determine Node.js major version` even though `node -v` reported `v24.13.1`.
+- Cause: the installer used `node -p` with `process.stdout.write(...)`, and newer Node releases printed both the written major and the boolean return value, producing values like `24true`.
+- Mitigation: the installer now parses the major through a pure `node -p` expression and CI runs `scripts/test-install-amesh-node.sh` to cover both the Node 24 happy path and the invalid-parse failure path.
+
 ## 2026-05-11: Server smoke drifted from browser auth
 
 - The smoke script still called browser-facing session and trigger APIs anonymously after the server moved those routes behind cookie auth.

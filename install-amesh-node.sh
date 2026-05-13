@@ -159,19 +159,10 @@ extract_archive() {
   esac
 }
 
-need_cmd curl
-need_cmd uname
-need_cmd mktemp
-need_cmd tar
-need_cmd node
-need_cmd npm
-need_cmd install
-need_cmd mkdir
-
 require_node_major() {
   min_major="$1"
   current_major="$(
-    node -p 'const [major] = process.versions.node.split("."); process.stdout.write(String(Number(major)))' 2>/dev/null
+    node -p 'process.versions.node.split(".")[0]' 2>/dev/null
   )"
   case "$current_major" in
     ''|*[!0-9]*)
@@ -183,91 +174,101 @@ require_node_major() {
   fi
 }
 
-if [[ -z "$SERVER_URL" ]]; then
-  fail "SERVER_URL is required"
-fi
+main() {
+  need_cmd curl
+  need_cmd uname
+  need_cmd mktemp
+  need_cmd tar
+  need_cmd node
+  need_cmd npm
+  need_cmd install
+  need_cmd mkdir
 
-require_node_major 22
-
-os="$(detect_os)"
-arch="$(detect_arch)"
-ext="$(asset_ext "$os")"
-tag="${VERSION_TAG}"
-
-if [ -z "${tag}" ]; then
-  tag="$(latest_tag)"
-fi
-
-[ -n "${tag}" ] || fail "could not determine release tag"
-
-asset="amesh-node-${os}-${arch}.${ext}"
-download_url="https://github.com/${REPO}/releases/download/${tag}/${asset}"
-install_dir="$(pick_install_dir)"
-binary_path="${BINARY_PATH:-$install_dir/amesh-node}"
-tmp_dir="$(mktemp -d)"
-trap 'rm -rf "${tmp_dir}"' EXIT
-
-mkdir -p "${install_dir}"
-mkdir -p "${AMESH_HOME}"
-mkdir -p "$(dirname "$STATE_PATH")"
-mkdir -p "$(dirname "$SERVICE_PATH")"
-mkdir -p "$(dirname "$CONFIG_PATH")"
-
-log "installing amesh-node from ${tag}"
-log "downloading ${download_url}"
-curl -fsSL "${download_url}" -o "${tmp_dir}/${asset}"
-
-extract_dir="${tmp_dir}/extract"
-mkdir -p "${extract_dir}"
-extract_archive "${tmp_dir}/${asset}" "${extract_dir}"
-
-binary_name="amesh-node"
-if [ "${os}" = "windows" ]; then
-  binary_name="amesh-node.exe"
-fi
-
-[ -f "${extract_dir}/${binary_name}" ] || fail "archive did not contain ${binary_name}"
-install -m 0755 "${extract_dir}/${binary_name}" "${binary_path}"
-
-if command -v systemctl >/dev/null 2>&1; then
-  systemctl --user stop "$SERVICE_NAME" >/dev/null 2>&1 || true
-fi
-
-if [[ ! -x "$ACPX_BIN" ]]; then
-  log "installing managed acpx sidecar into ${ACPX_PREFIX}"
-  npm install --global --prefix "$ACPX_PREFIX" "$ACPX_NPM_SPEC"
-else
-  log "managed acpx already present: ${ACPX_BIN}"
-fi
-
-ensure_acpx_config "$ACPX_CONFIG_PATH"
-
-if [[ ! -f "$CONFIG_PATH" ]]; then
-  log "no node config found; running detect into ${CONFIG_PATH}"
-  env AMESH_ACPX_PATH="$ACPX_BIN" "$binary_path" detect --config "$CONFIG_PATH"
-else
-  log "reusing existing node config: ${CONFIG_PATH}"
-fi
-
-if [[ -n "$REGISTRATION_TOKEN" ]]; then
-  if [[ -f "$STATE_PATH" ]]; then
-    log "registration token provided; refreshing node registration for ${NODE_ID}"
-  else
-    log "no node state found; registering node ${NODE_ID} against ${SERVER_URL}"
+  if [[ -z "$SERVER_URL" ]]; then
+    fail "SERVER_URL is required"
   fi
-  "$binary_path" register \
-    --server "$SERVER_URL" \
-    --token "$REGISTRATION_TOKEN" \
-    --node-id "$NODE_ID" \
-    --config "$CONFIG_PATH" \
-    --state "$STATE_PATH"
-elif [[ -f "$STATE_PATH" ]]; then
-  log "reusing existing node state: ${STATE_PATH}"
-else
-  fail "REGISTRATION_TOKEN is required for first-time registration"
-fi
 
-cat >"$SERVICE_PATH" <<EOF
+  require_node_major 22
+
+  os="$(detect_os)"
+  arch="$(detect_arch)"
+  ext="$(asset_ext "$os")"
+  tag="${VERSION_TAG}"
+
+  if [ -z "${tag}" ]; then
+    tag="$(latest_tag)"
+  fi
+
+  [ -n "${tag}" ] || fail "could not determine release tag"
+
+  asset="amesh-node-${os}-${arch}.${ext}"
+  download_url="https://github.com/${REPO}/releases/download/${tag}/${asset}"
+  install_dir="$(pick_install_dir)"
+  binary_path="${BINARY_PATH:-$install_dir/amesh-node}"
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+
+  mkdir -p "${install_dir}"
+  mkdir -p "${AMESH_HOME}"
+  mkdir -p "$(dirname "$STATE_PATH")"
+  mkdir -p "$(dirname "$SERVICE_PATH")"
+  mkdir -p "$(dirname "$CONFIG_PATH")"
+
+  log "installing amesh-node from ${tag}"
+  log "downloading ${download_url}"
+  curl -fsSL "${download_url}" -o "${tmp_dir}/${asset}"
+
+  extract_dir="${tmp_dir}/extract"
+  mkdir -p "${extract_dir}"
+  extract_archive "${tmp_dir}/${asset}" "${extract_dir}"
+
+  binary_name="amesh-node"
+  if [ "${os}" = "windows" ]; then
+    binary_name="amesh-node.exe"
+  fi
+
+  [ -f "${extract_dir}/${binary_name}" ] || fail "archive did not contain ${binary_name}"
+  install -m 0755 "${extract_dir}/${binary_name}" "${binary_path}"
+
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl --user stop "$SERVICE_NAME" >/dev/null 2>&1 || true
+  fi
+
+  if [[ ! -x "$ACPX_BIN" ]]; then
+    log "installing managed acpx sidecar into ${ACPX_PREFIX}"
+    npm install --global --prefix "$ACPX_PREFIX" "$ACPX_NPM_SPEC"
+  else
+    log "managed acpx already present: ${ACPX_BIN}"
+  fi
+
+  ensure_acpx_config "$ACPX_CONFIG_PATH"
+
+  if [[ ! -f "$CONFIG_PATH" ]]; then
+    log "no node config found; running detect into ${CONFIG_PATH}"
+    env AMESH_ACPX_PATH="$ACPX_BIN" "$binary_path" detect --config "$CONFIG_PATH"
+  else
+    log "reusing existing node config: ${CONFIG_PATH}"
+  fi
+
+  if [[ -n "$REGISTRATION_TOKEN" ]]; then
+    if [[ -f "$STATE_PATH" ]]; then
+      log "registration token provided; refreshing node registration for ${NODE_ID}"
+    else
+      log "no node state found; registering node ${NODE_ID} against ${SERVER_URL}"
+    fi
+    "$binary_path" register \
+      --server "$SERVER_URL" \
+      --token "$REGISTRATION_TOKEN" \
+      --node-id "$NODE_ID" \
+      --config "$CONFIG_PATH" \
+      --state "$STATE_PATH"
+  elif [[ -f "$STATE_PATH" ]]; then
+    log "reusing existing node state: ${STATE_PATH}"
+  else
+    fail "REGISTRATION_TOKEN is required for first-time registration"
+  fi
+
+  cat >"$SERVICE_PATH" <<EOF
 [Unit]
 Description=amesh remote node daemon
 After=network-online.target
@@ -286,23 +287,28 @@ RestartSec=5
 WantedBy=default.target
 EOF
 
-if command -v systemctl >/dev/null 2>&1; then
-  systemctl --user daemon-reload
-  systemctl --user enable --now "$SERVICE_NAME"
-  sleep 2
-  if ! systemctl --user --quiet is-active "$SERVICE_NAME"; then
-    log "service failed to stay active: $SERVICE_NAME"
-    systemctl --user --no-pager --full status "$SERVICE_NAME" >&2 || true
-    journalctl --user -u "$SERVICE_NAME" -n 80 --no-pager >&2 || true
-    fail "amesh-node user service did not reach active state"
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl --user daemon-reload
+    systemctl --user enable --now "$SERVICE_NAME"
+    sleep 2
+    if ! systemctl --user --quiet is-active "$SERVICE_NAME"; then
+      log "service failed to stay active: $SERVICE_NAME"
+      systemctl --user --no-pager --full status "$SERVICE_NAME" >&2 || true
+      journalctl --user -u "$SERVICE_NAME" -n 80 --no-pager >&2 || true
+      fail "amesh-node user service did not reach active state"
+    fi
+    log "installed and started user service: $SERVICE_NAME"
+    log "service logs: journalctl --user -u ${SERVICE_NAME} -f"
+  else
+    log "systemctl not found; service file written to $SERVICE_PATH"
+    log "start manually: AMESH_ACPX_PATH='${ACPX_BIN}' '${binary_path}' run --state '${STATE_PATH}'"
   fi
-  log "installed and started user service: $SERVICE_NAME"
-  log "service logs: journalctl --user -u ${SERVICE_NAME} -f"
-else
-  log "systemctl not found; service file written to $SERVICE_PATH"
-  log "start manually: AMESH_ACPX_PATH='${ACPX_BIN}' '${binary_path}' run --state '${STATE_PATH}'"
-fi
 
-log "installed ${binary_path}"
-log "managed acpx: ${ACPX_BIN}"
-log "state: ${STATE_PATH}"
+  log "installed ${binary_path}"
+  log "managed acpx: ${ACPX_BIN}"
+  log "state: ${STATE_PATH}"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
