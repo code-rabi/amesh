@@ -334,8 +334,17 @@ describe("App shell", () => {
 
     await waitFor(() => expect(updateRequests).toBe(1));
     await waitFor(() =>
-      expect(screen.getByText(/update requested\. the node should reconnect after restart\./i)).toBeTruthy()
+      expect(screen.getByText(/update command accepted\. waiting for the node to restart/i)).toBeTruthy()
     );
+    expect(screen.getByText(/current/i)).toBeTruthy();
+    expect(screen.getByText("v0.1.0")).toBeTruthy();
+    expect(screen.getByText(/available/i)).toBeTruthy();
+    expect(screen.getAllByText("v0.1.1").length).toBeGreaterThan(0);
+    const updateButton = screen.getByRole("button", { name: /update lab-01/i });
+    expect(updateButton.textContent).toMatch(/update requested/i);
+    expect(updateButton.hasAttribute("disabled")).toBe(true);
+    fireEvent.click(updateButton);
+    expect(updateRequests).toBe(1);
   });
 
   it("triggers agent detection from the admin UI", async () => {

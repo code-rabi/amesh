@@ -107,7 +107,25 @@ export function NodeSettingsButton({
   const [loadedDirectories, setLoadedDirectories] = useState(false);
   const [busyAction, setBusyAction] = useState<"paths" | "detect" | "update" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [updateRequest, setUpdateRequest] = useState<{
+    nodeId: string;
+    fromVersion: string | null;
+    toVersion: string | null;
+    requestedAt: string;
+  } | null>(null);
   const nodeOffline = node.status !== "online";
+  const updateRequested =
+    updateRequest?.nodeId === node.id &&
+    updateRequest.fromVersion === node.version &&
+    updateRequest.toVersion === node.latestVersion;
+  const updateActionDisabled =
+    busyAction !== null || nodeOffline || !node.updateRequired || updateRequested;
+
+  useEffect(() => {
+    if (updateRequest?.nodeId === node.id && !node.updateRequired) {
+      setUpdateRequest(null);
+    }
+  }, [node.id, node.updateRequired, updateRequest?.nodeId]);
 
   useEffect(() => {
     if (!open) {
@@ -198,7 +216,7 @@ export function NodeSettingsButton({
   }
 
   async function handleUpdateNode() {
-    if (nodeOffline || !node.updateRequired) {
+    if (nodeOffline || !node.updateRequired || updateRequested) {
       return;
     }
 
@@ -206,7 +224,17 @@ export function NodeSettingsButton({
     setMessage(null);
     try {
       await requestNodeUpdate(node.id);
-      setMessage("Update requested. The node should reconnect after restart.");
+      setUpdateRequest({
+        nodeId: node.id,
+        fromVersion: node.version,
+        toVersion: node.latestVersion,
+        requestedAt: new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit"
+        })
+      });
+      setMessage("Update command accepted. Waiting for the node to restart and report the new version.");
       refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not request update.");
@@ -491,12 +519,46 @@ export function NodeSettingsButton({
                           className="btn btn-ghost"
                           aria-label={`Update ${node.name}`}
                           onClick={() => void handleUpdateNode()}
-                          disabled={busyAction !== null || nodeOffline}
+                          disabled={updateActionDisabled}
                         >
-                          {busyAction === "update" ? "Updating..." : "Update node"}
+                          {busyAction === "update"
+                            ? "Requesting..."
+                            : updateRequested
+                              ? "Update requested"
+                              : "Update node"}
                         </button>
                       ) : null}
                     </div>
+                    {node.updateRequired || updateRequested ? (
+                      <div className="node-settings__update-log" role="status" aria-live="polite">
+                        <div className="node-settings__update-row">
+                          <span>Current</span>
+                          <code>{node.version ?? "unknown"}</code>
+                        </div>
+                        <div className="node-settings__update-row">
+                          <span>Available</span>
+                          <code>{node.latestVersion ?? "unknown"}</code>
+                        </div>
+                        {busyAction === "update" ? (
+                          <div className="node-settings__update-row">
+                            <span>Request</span>
+                            <strong>Sending command...</strong>
+                          </div>
+                        ) : null}
+                        {updateRequested && updateRequest ? (
+                          <>
+                            <div className="node-settings__update-row">
+                              <span>Request</span>
+                              <strong>Accepted at {updateRequest.requestedAt}</strong>
+                            </div>
+                            <div className="node-settings__update-note">
+                              The button is locked until this node reconnects with{" "}
+                              <code>{updateRequest.toVersion ?? "the latest version"}</code> or the request fails.
+                            </div>
+                          </>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
 

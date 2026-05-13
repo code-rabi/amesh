@@ -936,6 +936,38 @@ button:focus { outline: none; }
   display: grid;
   gap: var(--s-2);
 }
+.node-settings__update-log {
+  display: grid;
+  gap: 6px;
+  padding: var(--s-3);
+  border: 1px solid var(--c-line);
+  border-radius: var(--r-sm);
+  background: var(--c-surface);
+}
+.node-settings__update-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--s-2);
+  align-items: center;
+  font: var(--t-body);
+  color: var(--c-mute);
+}
+.node-settings__update-row code,
+.node-settings__update-note code {
+  font: var(--t-mono);
+  font-size: 0.75rem;
+  color: var(--c-ink);
+}
+.node-settings__update-row strong {
+  font: var(--t-label);
+  color: var(--c-accent-strong);
+}
+.node-settings__update-note {
+  padding-top: var(--s-2);
+  border-top: 1px solid var(--c-line);
+  font: var(--t-body);
+  color: var(--c-mute);
+}
 .node-settings__message {
   padding: var(--s-3);
   border: 1px solid var(--c-line);
