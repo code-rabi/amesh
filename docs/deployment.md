@@ -14,6 +14,7 @@ The MVP ships as one control-plane deployable and one separate remote daemon ins
 
 - The root `Dockerfile` builds the web app and runs only the server process.
 - The server serves `apps/web/dist` directly in deployed environments.
+- The control-plane SQLite database lives under `/app/apps/server/data` in the container, so persistent container deployments should mount that path.
 - Production deployments should set `AUTH_ADMIN_PASSWORD`. If it is omitted, the server generates a random UUID admin password for that process and logs it once on startup, which is only appropriate as a recovery fallback.
 - Production deployments should set `AUTH_SESSION_SECRET` so admin cookies remain valid across restarts.
 - Production deployments should set `AMESH_REGISTRATION_TOKEN` so node bootstrap is explicitly gated.

@@ -45,7 +45,8 @@ import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { nanoid } from "nanoid";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { extname, join, normalize, resolve, sep } from "node:path";
+import { dirname, extname, join, normalize, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import WebSocket, { WebSocketServer } from "ws";
 
 import {
@@ -101,10 +102,14 @@ function websocketSend(socket: WebSocket, payload: unknown) {
   socket.send(JSON.stringify(payload));
 }
 
+export function defaultDbPath() {
+  return resolve(dirname(fileURLToPath(import.meta.url)), "../data/amesh.sqlite");
+}
+
 export function buildApp(options: AppOptions = {}) {
   const app = Fastify({ logger: false });
   void app.register(cookie);
-  const db = createDatabase(options.dbPath ?? "apps/server/data/amesh.sqlite");
+  const db = createDatabase(options.dbPath ?? defaultDbPath());
   const repository = new Repository(db);
   const registrationToken =
     options.registrationToken ?? process.env.AMESH_REGISTRATION_TOKEN ?? "";

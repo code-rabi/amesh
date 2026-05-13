@@ -27,6 +27,7 @@
 - The server also covers authenticated exposed-path updates, including rejection for offline nodes.
 - The server also covers zero-agent node registration so a node still appears in topology before any local agent inventory is available.
 - The server also covers invalid registration-token rejection, resume via durable reconnect token, trigger-rule deletion, and static dashboard serving from the control-plane deployable.
+- The server also covers resolving its default SQLite path independently of `process.cwd()`, which protects Docker deployments that start the server from the package directory.
 - The server smoke command exercises node registration, direct chat, denied routing, and allowed cross-node routing in one local flow.
 - The GitHub Actions `CI` workflow runs the root JavaScript gate, the server smoke flow through that gate, Go tests, and shell syntax checks on pull requests and on pushes to `main`.
 - `scripts/test-install-amesh-node.sh` covers the installer's Node major parsing failure path and also executes the installer through stdin so the published `curl | bash` bootstrap shape stays working under `set -u`.
