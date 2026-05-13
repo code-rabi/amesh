@@ -27,6 +27,38 @@ export type SessionsStore = {
   refresh: () => void;
 };
 
+export function sameSessionSummary(a: SessionSummary, b: SessionSummary): boolean {
+  return (
+    a.id === b.id &&
+    a.entryAgentId === b.entryAgentId &&
+    a.initiator === b.initiator &&
+    a.status === b.status &&
+    a.createdAt === b.createdAt &&
+    a.cwd === b.cwd &&
+    a.parentSessionId === b.parentSessionId &&
+    a.sourceAgentId === b.sourceAgentId
+  );
+}
+
+export function sameSessionView(a: SessionView | null, b: SessionView): boolean {
+  if (!a || !sameSessionSummary(a.session, b.session)) return false;
+  if (a.events.length !== b.events.length) return false;
+  for (let index = 0; index < a.events.length; index += 1) {
+    const left = a.events[index]!;
+    const right = b.events[index]!;
+    if (
+      left.id !== right.id ||
+      left.eventType !== right.eventType ||
+      left.sourceAgentId !== right.sourceAgentId ||
+      left.targetAgentId !== right.targetAgentId ||
+      left.createdAt !== right.createdAt
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function useSessionsStore(): SessionsStore {
   const [summaries, setSummaries] = useState<SessionSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -36,8 +68,12 @@ export function useSessionsStore(): SessionsStore {
   const selectedIdRef = useRef<string | null>(null);
 
   function upsertSummary(list: SessionSummary[], next: SessionSummary): SessionSummary[] {
-    const without = list.filter((item) => item.id !== next.id);
-    return [...without, next];
+    const existingIndex = list.findIndex((item) => item.id === next.id);
+    if (existingIndex < 0) return [...list, next];
+    if (sameSessionSummary(list[existingIndex]!, next)) return list;
+    const copy = [...list];
+    copy[existingIndex] = next;
+    return copy;
   }
 
   useEffect(() => {
@@ -62,7 +98,9 @@ export function useSessionsStore(): SessionsStore {
         if (event.type === "session.updated") {
           setSummaries((current) => upsertSummary(current, event.payload.session));
           if (selectedIdRef.current === event.payload.session.id) {
-            setSelected(event.payload);
+            setSelected((current) =>
+              sameSessionView(current, event.payload) ? current : event.payload
+            );
           }
         }
       });
