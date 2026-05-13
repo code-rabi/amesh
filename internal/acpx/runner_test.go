@@ -65,6 +65,38 @@ func TestRunnerRecreatesSessionWhenACPMetadataIsMissing(t *testing.T) {
 	}
 }
 
+func TestRunnerRecreatesSessionWhenOpenClawPromptACPMetadataIsMissing(t *testing.T) {
+	t.Parallel()
+
+	statePath := filepath.Join(t.TempDir(), "state")
+	command, args := helperCommand(t, "recover-openclaw-prompt-missing-acp-metadata")
+	output, err := (Runner{}).Run(context.Background(), RunRequest{
+		Command: command,
+		Args:    args,
+		Agent:   "openclaw",
+		Session: "agent-main-acp-d9d29d47",
+		Stdin:   "review this",
+		Env: []string{
+			"GO_WANT_HELPER_PROCESS=1",
+			"ACP_METADATA_RECOVERY_STATE=" + statePath,
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !strings.Contains(string(output), "prompt-ok") {
+		t.Fatalf("output = %q, want prompt-ok", output)
+	}
+
+	bytes, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.TrimSpace(string(bytes)), "ensure\nprompt\nnew\nprompt"; got != want {
+		t.Fatalf("commands = %q, want %q", got, want)
+	}
+}
+
 func TestRunnerCancelsProcess(t *testing.T) {
 	t.Parallel()
 
@@ -146,6 +178,8 @@ func TestRunnerHelperProcess(t *testing.T) {
 		os.Exit(0)
 	case "recover-missing-acp-metadata":
 		helperRecoverMissingACPMetadata()
+	case "recover-openclaw-prompt-missing-acp-metadata":
+		helperRecoverOpenClawPromptMissingACPMetadata()
 	default:
 		fmt.Fprintf(os.Stderr, "unknown helper mode %q", mode)
 		os.Exit(2)
@@ -181,6 +215,50 @@ func helperRecoverMissingACPMetadata() {
 	if command == "ensure" && !strings.Contains(string(previous), "new\n") {
 		fmt.Fprintln(os.Stderr, "ACP error (ACP_SESSION_INIT_FAILED): ACP metadata is missing for agent:main:acp:55f0c666-f57c-4198-a9e3-ac9954d8cf43. Recreate this ACP session with /acp spawn and rebind the thread.")
 		os.Exit(1)
+	}
+	os.Exit(0)
+}
+
+func helperRecoverOpenClawPromptMissingACPMetadata() {
+	statePath := os.Getenv("ACP_METADATA_RECOVERY_STATE")
+	if statePath == "" {
+		fmt.Fprintln(os.Stderr, "missing ACP_METADATA_RECOVERY_STATE")
+		os.Exit(2)
+	}
+
+	args := os.Args
+	command := ""
+	for index := 0; index+2 < len(args); index++ {
+		if args[index] != "openclaw" {
+			continue
+		}
+		switch {
+		case args[index+1] == "sessions":
+			command = args[index+2]
+		case args[index+1] == "--session" || (index+2 < len(args) && args[index+1] == "agent-main-acp-d9d29d47"):
+			command = "prompt"
+		default:
+			command = "prompt"
+		}
+		break
+	}
+	if command == "" {
+		fmt.Fprintf(os.Stderr, "missing openclaw command in %q", args)
+		os.Exit(2)
+	}
+
+	previous, _ := os.ReadFile(statePath)
+	if err := os.WriteFile(statePath, append(previous, []byte(command+"\n")...), 0o600); err != nil {
+		fmt.Fprintf(os.Stderr, "write state: %v", err)
+		os.Exit(2)
+	}
+
+	if command == "prompt" && !strings.Contains(string(previous), "new\n") {
+		fmt.Fprintln(os.Stderr, "ACP error (ACP_SESSION_INIT_FAILED): ACP metadata is missing for agent:main:acp:d9d29d47-c7c5-40d0-9773-e464d4430352. Recreate this ACP session with /acp spawn and rebind the thread. next: If this session is stale, recreate it with /acp spawn and rebind the thread.")
+		os.Exit(1)
+	}
+	if command == "prompt" {
+		fmt.Fprintln(os.Stdout, "prompt-ok")
 	}
 	os.Exit(0)
 }

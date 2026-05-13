@@ -4,7 +4,7 @@
 
 - Symptom: production OpenClaw sessions failed with `ACP_SESSION_INIT_FAILED` and `ACP metadata is missing for agent:main:acp:<id>`, instructing the operator to recreate the ACP session with `/acp spawn`.
 - Cause: the node daemon reused the server session id as the ACPX session name, but a stale ACPX session could exist without the backing ACP metadata OpenClaw needs to initialize.
-- Mitigation: the Go ACPX runner now treats that exact metadata-missing failure as recoverable, recreates the named ACPX session once with `sessions new --name <session>`, and retries `sessions ensure`. A regression test covers the failure, recreate, and retry sequence.
+- Mitigation: the Go ACPX runner now treats that exact metadata-missing failure as recoverable both during `sessions ensure` and during the first prompt run, recreates the named ACPX session once with `sessions new --name <session>`, and retries. Regression tests cover the ensure path and the OpenClaw prompt-time failure shape.
 
 ## 2026-05-12: Installer rejected valid Node 24 runtimes
 
