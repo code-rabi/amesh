@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -546,6 +547,55 @@ exit 1
 			Command:   managed,
 			Args:      []string{},
 			Env:       map[string]string{"PATH": pathEnv},
+			Labels:    []string{"detected"},
+		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("detectAgents() = %#v, want %#v", got, want)
+	}
+}
+
+func TestDetectAgentsVerifiesOpenClawACPReadinessAcrossPathCandidates(t *testing.T) {
+	home := t.TempDir()
+	badDir := filepath.Join(t.TempDir(), "bad-bin")
+	goodDir := filepath.Join(t.TempDir(), "good-bin")
+	nodeDir := filepath.Join(t.TempDir(), "node-bin")
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", strings.Join([]string{badDir, goodDir, nodeDir}, string(os.PathListSeparator)))
+	t.Setenv("AMESH_ACPX_PATH", "")
+
+	managed := filepath.Join(home, ".local", "share", "amesh", "acpx", "bin", "acpx")
+	writeExecutable(t, managed, fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "--help" ]; then
+cat <<'EOF'
+Commands:
+  openclaw [options] [prompt...]          Use openclaw agent
+EOF
+exit 0
+fi
+if [ "$1" = "openclaw" ] && [ "$2" = "sessions" ] && [ "$3" = "ensure" ]; then
+  if [ "$(command -v openclaw)" = "%s/openclaw" ]; then
+    exit 0
+  fi
+  echo "ACP agent exited before initialize completed: wrapper unavailable" >&2
+  exit 1
+fi
+exit 1
+`, goodDir))
+	writeExecutable(t, filepath.Join(nodeDir, "node"), "#!/bin/sh\nexit 0\n")
+	writeExecutable(t, filepath.Join(badDir, "openclaw"), "#!/bin/sh\nexit 1\n")
+	writeExecutable(t, filepath.Join(goodDir, "openclaw"), "#!/bin/sh\nexit 0\n")
+
+	got := detectAgents(context.Background(), acpx.Runner{})
+	wantPath := strings.Join([]string{goodDir, nodeDir, badDir}, string(os.PathListSeparator))
+	want := []nodeconfig.AgentConfig{
+		{
+			ID:        "agent-openclaw",
+			Name:      "OpenClaw",
+			ACPXAgent: "openclaw",
+			Command:   managed,
+			Args:      []string{},
+			Env:       map[string]string{"PATH": wantPath},
 			Labels:    []string{"detected"},
 		},
 	}

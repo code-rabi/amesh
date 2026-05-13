@@ -6,6 +6,12 @@
 - Cause: the node daemon reused the server session id as the ACPX session name, but a stale ACPX session could exist without the backing ACP metadata OpenClaw needs to initialize.
 - Mitigation: the Go ACPX runner now treats that exact metadata-missing failure as recoverable both during `sessions ensure` and during the first prompt run, recreates the named ACPX session once with `sessions new --name <session>`, and retries. Regression tests cover the ensure path and the OpenClaw prompt-time failure shape.
 
+## 2026-05-13: OpenClaw executable detection could accept a broken wrapper
+
+- Symptom: `openclaw` was present on `PATH`, but `acpx openclaw` failed before ACP `initialize` because the first executable was a wrapper that depended on unavailable local state.
+- Cause: detection treated executable presence as enough, while OpenClaw's ACPX target needs `openclaw acp` to run as a clean stdio ACP server from the daemon environment.
+- Mitigation: OpenClaw detection now probes every `openclaw` executable directory on `PATH` with ACPX `sessions ensure`, persists the first PATH ordering that initializes successfully, and omits OpenClaw if none can start ACP. A regression test covers a broken wrapper before a working executable.
+
 ## 2026-05-12: Installer rejected valid Node 24 runtimes
 
 - Symptom: remote bootstrap failed early with `could not determine Node.js major version` even though `node -v` reported `v24.13.1`.
