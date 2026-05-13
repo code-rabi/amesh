@@ -29,7 +29,7 @@
 - Date: 2026-05-12
 - Symptom: `pnpm dev:daemon` detected agents but their health probes failed immediately with `Invalid config nonInteractivePermissions in ~/.acpx/config.json: expected deny or fail`.
 - Cause: our bootstrap installed ACPX but did not validate or create the ACPX user config, so stale local values like `approve-all` in `nonInteractivePermissions` broke first-run non-interactive probes.
-- Mitigation: both `scripts/dev-daemon.sh` and `install-amesh-node.sh` now normalize `~/.acpx/config.json` before detect/register and force `nonInteractivePermissions` to a valid baseline when missing or invalid.
+- Mitigation: both `scripts/dev-daemon.sh` and `install-amesh-node.sh` normalize `~/.acpx/config.json` before detect/register, and the Go ACPX runner repeats that guard before health probes and session starts. Missing or invalid `nonInteractivePermissions` is forced to `deny`.
 
 ## 2026-05-11: Quality checks covered behavior better than structural drift
 

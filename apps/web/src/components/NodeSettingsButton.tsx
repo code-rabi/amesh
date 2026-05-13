@@ -99,7 +99,6 @@ export function NodeSettingsButton({
     [agents]
   );
   const [open, setOpen] = useState(false);
-  const [requestedTab, setRequestedTab] = useState<"folders" | "agents">(startTab);
   const [activeTab, setActiveTab] = useState<"folders" | "agents">("folders");
   const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
   const [browsePath, setBrowsePath] = useState("");
@@ -109,18 +108,6 @@ export function NodeSettingsButton({
   const [busyAction, setBusyAction] = useState<"paths" | "detect" | "update" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const nodeOffline = node.status !== "online";
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    const nextPaths = [...currentPaths];
-    setSelectedPaths(nextPaths);
-    setBrowsePath(initialBrowsePath(nextPaths));
-    setActiveTab(requestedTab);
-    setLoadedDirectories(false);
-    setMessage(null);
-  }, [open, currentPaths, requestedTab]);
 
   useEffect(() => {
     if (!open) {
@@ -229,7 +216,12 @@ export function NodeSettingsButton({
   }
 
   function openModal() {
-    setRequestedTab(startTab);
+    const nextPaths = [...currentPaths];
+    setSelectedPaths(nextPaths);
+    setBrowsePath(initialBrowsePath(nextPaths));
+    setActiveTab(startTab);
+    setLoadedDirectories(false);
+    setMessage(null);
     setOpen(true);
   }
 
