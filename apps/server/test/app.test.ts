@@ -157,6 +157,73 @@ describe("server app", () => {
     socket.close();
   });
 
+  it("serves MCP initialize and tools/list over HTTP", async () => {
+    const socket = new WebSocket(`ws://${address}/ws?role=node&nodeId=node-1`);
+    await waitForOpen(socket);
+    socket.send(JSON.stringify(registerNode("node-1", "node-a")));
+    socket.send(
+      JSON.stringify(
+        syncCapabilities("node-1", [{ id: "agent-1", name: "Planner", acpxAgent: "planner" }])
+      )
+    );
+    await readNodeMessage(socket);
+    await waitForIdle();
+
+    const initialized = await fetchMcp(address, {
+      jsonrpc: "2.0",
+      id: "init-1",
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: {
+          name: "vitest",
+          version: "1.0.0"
+        }
+      }
+    });
+    expect(initialized.status).toBe(200);
+    expect(initialized.body).toMatchObject({
+      jsonrpc: "2.0",
+      id: "init-1",
+      result: {
+        protocolVersion: "2025-06-18"
+      }
+    });
+
+    expect(typeof initialized.sessionId).toBe("string");
+    if (!initialized.sessionId) {
+      throw new Error("MCP session id missing");
+    }
+
+    const tools = await fetchMcp(
+      address,
+      {
+        jsonrpc: "2.0",
+        id: "tools-1",
+        method: "tools/list",
+        params: {}
+      },
+      {
+        sessionId: initialized.sessionId
+      }
+    );
+    expect(tools.status).toBe(200);
+    const toolNames = (tools.body.result.tools as Array<{ name: string }>).map((tool) => tool.name);
+    expect(toolNames).toEqual(
+      expect.arrayContaining([
+        "get_scope",
+        "list_agents",
+        "list_connected_agents",
+        "start_session",
+        "list_sessions",
+        "get_session",
+        "cancel_session"
+      ])
+    );
+    socket.close();
+  });
+
   it("resolves the default sqlite path independently of process cwd", async () => {
     const originalCwd = process.cwd();
     const tempCwd = await mkdtemp(join(tmpdir(), "amesh-db-cwd-"));
@@ -298,6 +365,134 @@ describe("server app", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ registrationToken: "expected-token" });
     await guardedApp.close();
+  });
+
+  it("lets a scoped MCP caller list connected agents and start an agent session", async () => {
+    const sourceSocket = new WebSocket(`ws://${address}/ws?role=node&nodeId=node-a`);
+    const targetSocket = new WebSocket(`ws://${address}/ws?role=node&nodeId=node-b`);
+    await waitForOpen(sourceSocket);
+    await waitForOpen(targetSocket);
+
+    sourceSocket.send(JSON.stringify(registerNode("node-a", "source")));
+    sourceSocket.send(
+      JSON.stringify(
+        syncCapabilities("node-a", [{ id: "agent-source", name: "Source", acpxAgent: "planner" }])
+      )
+    );
+    targetSocket.send(JSON.stringify(registerNode("node-b", "target")));
+    targetSocket.send(
+      JSON.stringify(
+        syncCapabilities("node-b", [{ id: "agent-target", name: "Target", acpxAgent: "reviewer" }])
+      )
+    );
+    await readNodeMessage(sourceSocket);
+    await readNodeMessage(targetSocket);
+    await waitForIdle();
+
+    const ruleResponse = await injectAuthed(app, authCookie, {
+      method: "POST",
+      url: "/api/trigger-rules",
+      payload: {
+        sourceAgentId: "agent-source",
+        targetAgentId: "agent-target",
+        mode: "allow"
+      }
+    });
+    expect(ruleResponse.statusCode).toBe(200);
+
+    const initialized = await fetchMcp(
+      address,
+      {
+        jsonrpc: "2.0",
+        id: "init-scoped",
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: {
+            name: "scoped-agent",
+            version: "1.0.0"
+          }
+        }
+      },
+      {
+        agentId: "agent-source"
+      }
+    );
+    expect(initialized.status).toBe(200);
+    const sessionId = initialized.sessionId;
+    if (!sessionId) {
+      throw new Error("MCP session id missing");
+    }
+
+    const connected = await fetchMcp(
+      address,
+      {
+        jsonrpc: "2.0",
+        id: "connected-1",
+        method: "tools/call",
+        params: {
+          name: "list_connected_agents",
+          arguments: {}
+        }
+      },
+      {
+        sessionId
+      }
+    );
+    expect(connected.status).toBe(200);
+    const connectedPayload = connected.body.result.structuredContent as {
+      sourceAgentId: string;
+      agents: Array<{ id: string }>;
+    };
+    expect(connectedPayload.sourceAgentId).toBe("agent-source");
+    expect(connectedPayload.agents).toEqual([
+      expect.objectContaining({
+        id: "agent-target"
+      })
+    ]);
+
+    const startMessagePromise = readNodeMessage(targetSocket);
+    const startResponse = await fetchMcp(
+      address,
+      {
+        jsonrpc: "2.0",
+        id: "start-1",
+        method: "tools/call",
+        params: {
+          name: "start_session",
+          arguments: {
+            targetAgentId: "agent-target",
+            prompt: "Review this diff."
+          }
+        }
+      },
+      {
+        sessionId
+      }
+    );
+    expect(startResponse.status).toBe(200);
+    const started = startResponse.body.result.structuredContent as {
+      session: { entryAgentId: string; initiator: string; sourceAgentId: string | null };
+    };
+    expect(started.session).toMatchObject({
+      entryAgentId: "agent-target",
+      initiator: "agent",
+      sourceAgentId: "agent-source"
+    });
+
+    const startMessage = await startMessagePromise;
+    expect(startMessage).toMatchObject({
+      type: "session.start",
+      payload: expect.objectContaining({
+        agentId: "agent-target",
+        prompt: "Review this diff.",
+        initiator: "agent"
+      })
+    });
+
+    sourceSocket.close();
+    targetSocket.close();
   });
 
   it("marks topology nodes as requiring update when their reported version trails the latest release", async () => {
@@ -1156,4 +1351,32 @@ async function injectAuthed(
       cookie
     }
   });
+}
+
+async function fetchMcp(
+  address: string,
+  body: Record<string, unknown>,
+  options: {
+    sessionId?: string;
+    agentId?: string;
+    nodeId?: string;
+  } = {}
+) {
+  const response = await fetch(`http://${address}/mcp`, {
+    method: "POST",
+    headers: {
+      accept: "application/json, text/event-stream",
+      "content-type": "application/json",
+      authorization: "Bearer secret-pass",
+      ...(options.sessionId ? { "mcp-session-id": options.sessionId } : {}),
+      ...(options.agentId ? { "x-amesh-agent-id": options.agentId } : {}),
+      ...(options.nodeId ? { "x-amesh-node-id": options.nodeId } : {})
+    },
+    body: JSON.stringify(body)
+  });
+  return {
+    status: response.status,
+    sessionId: response.headers.get("mcp-session-id"),
+    body: (await response.json()) as Record<string, any>
+  };
 }

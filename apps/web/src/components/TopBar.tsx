@@ -31,20 +31,20 @@ export function TopBar({ topology }: Props) {
         <span>{topology.triggerRules.length === 1 ? "rule" : "rules"}</span>
       </div>
 
-      <button
-        type="button"
-        className="btn btn-primary"
-        onClick={() => setAddOpen((open) => !open)}
-        aria-expanded={addOpen}
-      >
-        {addOpen ? "Close" : "Add Node"}
-      </button>
+      <div className="topbar__actions">
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={() => setAddOpen((open) => !open)}
+          aria-expanded={addOpen}
+          aria-haspopup="dialog"
+        >
+          {addOpen ? "Close" : "Add Node"}
+        </button>
+      </div>
 
       {addOpen ? (
-        <AddNodePanel
-          waitingForNodes={topology.nodes.length === 0}
-          onClose={() => setAddOpen(false)}
-        />
+        <AddNodePanel waitingForNodes={topology.nodes.length === 0} onClose={() => setAddOpen(false)} />
       ) : null}
     </header>
   );

@@ -1,9 +1,10 @@
 import { Handle, Position } from "@xyflow/react";
 import { useNavigate } from "@tanstack/react-router";
-import { ArrowRight } from "lucide-react";
+import { useState } from "react";
 
 import type { AgentRecord, AgentStatus, NodeRecord, NodeStatus } from "@amesh/protocol";
 import { relativeTime } from "../lib/time.js";
+import { McpPanel } from "./McpPanel.js";
 import { NodeSettingsButton } from "./NodeSettingsButton.js";
 
 export type NodeCardData = {
@@ -24,6 +25,12 @@ function nodePill(status: NodeStatus) {
   return "pill pill-offline";
 }
 
+function agentPill(status: AgentStatus) {
+  if (status === "online") return "pill pill-online";
+  if (status === "error") return "pill pill-error";
+  return "pill pill-offline";
+}
+
 function nodePillLabel(status: NodeStatus) {
   return status;
 }
@@ -33,143 +40,45 @@ function agentStatusLabel(status: AgentStatus) {
 }
 
 export function NodeCard({ data }: NodeCardProps) {
-  const {
-    node,
-    agents,
-    connectionSourceAgentId,
-    connectionSourceAgentName,
-    onConnectionPick
-  } = data.data;
+  const { node, agents } = data.data;
   const isOffline = node.status === "offline";
   const navigate = useNavigate();
+  const [mcpAgent, setMcpAgent] = useState<AgentRecord | null>(null);
 
   return (
     <div className="node-card" data-status={node.status}>
+      {/* Node header */}
       <div className="node-card__header">
-        <div>
+        <div className="node-card__identity">
           <h3 className="node-card__name">{node.name}</h3>
           <div className="node-card__host">{node.host}</div>
           {isOffline ? (
-            <div className="node-card__lastseen">
-              Last seen {relativeTime(node.lastSeenAt)}
-            </div>
+            <div className="node-card__lastseen">Last seen {relativeTime(node.lastSeenAt)}</div>
           ) : null}
           {node.status === "pending" ? (
             <div className="node-card__lastseen">Waiting for first heartbeat.</div>
           ) : null}
         </div>
-        <div className="node-card__meta">
+        <div className="node-card__header-actions">
           <span className={nodePill(node.status)}>{nodePillLabel(node.status)}</span>
-          <div onPointerDown={(event) => event.stopPropagation()}>
+          <div onPointerDown={(e) => e.stopPropagation()}>
             <NodeSettingsButton node={node} agents={agents} />
           </div>
         </div>
       </div>
 
+      {/* Agent cards */}
       {agents.length === 0 ? (
         <div className="node-card__empty">No agents advertised yet.</div>
       ) : (
         <ul className="node-card__agents">
           {agents.map((agent) => {
             const chatDisabled = isOffline || agent.status !== "online";
-            const connectionSelected = connectionSourceAgentId === agent.id;
-            const connectionDisabled = isOffline || agent.status !== "online";
-            const connectionLabel = connectionSourceAgentId
-              ? connectionSelected
-                ? `Cancel connection from ${agent.name}`
-                : `Connect ${connectionSourceAgentName ?? "selected agent"} to ${agent.name}`
-              : `Start connection from ${agent.name}`;
-            return (
-              <li key={agent.id} className="node-card__agent">
-                <div>
-                  <div className="node-card__agent-name">{agent.name}</div>
-                  <div className="node-card__agent-id">{agent.id}</div>
-                  {typeof agent.capabilities.cwd === "string" ? (
-                    <div className="node-card__agent-cwd">{agent.capabilities.cwd}</div>
-                  ) : null}
-                </div>
-                <div className="node-card__agent-tail">
-                  <button
-                    type="button"
-                    className="node-card__connect"
-                    title={connectionDisabled ? "Agent is not online" : connectionLabel}
-                    aria-label={connectionLabel}
-                    aria-pressed={connectionSelected}
-                    disabled={connectionDisabled}
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      if (connectionDisabled) return;
-                      onConnectionPick(agent);
-                    }}
-                  >
-                    <ArrowRight size={13} aria-hidden />
-                  </button>
-                  <button
-                    type="button"
-                    className="node-card__chat"
-                    title={chatDisabled ? "Agent is not online" : "Open chat"}
-                    aria-label={`Open chat with ${agent.name}`}
-                    disabled={chatDisabled}
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      if (chatDisabled) return;
-                      void navigate({
-                        to: "/sessions",
-                        search: {
-                          node: agent.nodeId,
-                          folder: undefined,
-                          agent: agent.id,
-                          session: undefined,
-                        }
-                      });
-                    }}
-                  >
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden>
-                      <path
-                        d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"
-                        stroke="currentColor"
-                        strokeWidth="1.8"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  </button>
-                  {agent.status === "error" ? (
-                    <div onPointerDown={(event) => event.stopPropagation()}>
-                      <NodeSettingsButton
-                        node={node}
-                        agents={agents}
-                        startTab="agents"
-                        renderTrigger={({ open, openModal }) => (
-                          <button
-                            type="button"
-                            className="node-card__agent-status node-card__agent-status--button"
-                            data-status={agent.status}
-                            aria-label={`Open error details for ${agent.name} on ${node.name}`}
-                            aria-haspopup="dialog"
-                            aria-expanded={open}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              openModal();
-                            }}
-                          >
-                            {agentStatusLabel(agent.status)}
-                          </button>
-                        )}
-                      />
-                    </div>
-                  ) : (
-                    <span
-                      className="node-card__agent-status"
-                      data-status={agent.status}
-                    >
-                      {agentStatusLabel(agent.status)}
-                    </span>
-                  )}
-                </div>
+            const mcpOpen = mcpAgent?.id === agent.id;
 
+            return (
+              <li key={agent.id} className="node-card__agent" data-status={agent.status}>
+                {/* Connection handles at physical edges */}
                 <Handle
                   type="target"
                   position={Position.Left}
@@ -182,11 +91,92 @@ export function NodeCard({ data }: NodeCardProps) {
                   id={agent.id}
                   isConnectable={!isOffline}
                 />
+
+                {/* Agent info */}
+                <div className="node-card__agent-head">
+                  <span className="node-card__agent-name">{agent.name}</span>
+                  {agent.status === "error" ? (
+                    <div onPointerDown={(e) => e.stopPropagation()}>
+                      <NodeSettingsButton
+                        node={node}
+                        agents={agents}
+                        startTab="agents"
+                        renderTrigger={({ open, openModal }) => (
+                          <button
+                            type="button"
+                            className={`${agentPill(agent.status)} node-card__agent-status-btn`}
+                            aria-label={`Error details for ${agent.name}`}
+                            aria-haspopup="dialog"
+                            aria-expanded={open}
+                            onClick={(e) => { e.stopPropagation(); openModal(); }}
+                          >
+                            {agentStatusLabel(agent.status)}
+                          </button>
+                        )}
+                      />
+                    </div>
+                  ) : (
+                    <span className={agentPill(agent.status)}>
+                      {agentStatusLabel(agent.status)}
+                    </span>
+                  )}
+                </div>
+
+                <div className="node-card__agent-id">{agent.id}</div>
+
+                {typeof agent.capabilities.cwd === "string" ? (
+                  <div className="node-card__agent-cwd">{agent.capabilities.cwd}</div>
+                ) : null}
+
+                {/* Agent actions */}
+                <div
+                  className="node-card__agent-actions"
+                  onPointerDown={(e) => e.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    className="node-card__action"
+                    disabled={chatDisabled}
+                    title={chatDisabled ? "Agent is not online" : "Open chat"}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (chatDisabled) return;
+                      void navigate({
+                        to: "/sessions",
+                        search: {
+                          node: agent.nodeId,
+                          folder: undefined,
+                          agent: agent.id,
+                          session: undefined
+                        }
+                      });
+                    }}
+                  >
+                    Chat
+                  </button>
+                  <button
+                    type="button"
+                    className="node-card__action"
+                    aria-pressed={mcpOpen}
+                    title="Get MCP config"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMcpAgent((prev) => (prev?.id === agent.id ? null : agent));
+                    }}
+                  >
+                    MCP
+                  </button>
+                </div>
               </li>
             );
           })}
         </ul>
       )}
+
+      {/* MCP config modal — portal to body */}
+      {mcpAgent ? (
+        <McpPanel agent={mcpAgent} onClose={() => setMcpAgent(null)} />
+      ) : null}
     </div>
   );
 }

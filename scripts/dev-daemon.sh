@@ -90,6 +90,19 @@ if (needsWrite) {
 EOF
 }
 
+register_node() {
+  AMESH_ACPX_PATH="$AMESH_ACPX_PATH" go run ./cmd/amesh-node register \
+    --server "$SERVER_URL" \
+    --token "$REGISTRATION_TOKEN" \
+    --node-id "$NODE_ID" \
+    --config "$CONFIG_PATH" \
+    --state "$STATE_PATH"
+}
+
+run_node() {
+  env AMESH_ACPX_PATH="$AMESH_ACPX_PATH" go run ./cmd/amesh-node run --state "$STATE_PATH"
+}
+
 if [[ -z "${REGISTRATION_TOKEN:-}" || "$REGISTRATION_TOKEN" == "demo-token" ]]; then
   if token="$(read_registration_token "$SERVER_ENV_PATH")"; then
     REGISTRATION_TOKEN="$token"
@@ -127,12 +140,22 @@ if [[ ! -f "$CONFIG_PATH" ]]; then
 fi
 
 if [[ ! -f "$STATE_PATH" ]]; then
-  AMESH_ACPX_PATH="$AMESH_ACPX_PATH" go run ./cmd/amesh-node register \
-    --server "$SERVER_URL" \
-    --token "$REGISTRATION_TOKEN" \
-    --node-id "$NODE_ID" \
-    --config "$CONFIG_PATH" \
-    --state "$STATE_PATH"
+  register_node
 fi
 
-exec env AMESH_ACPX_PATH="$AMESH_ACPX_PATH" go run ./cmd/amesh-node run --state "$STATE_PATH"
+run_log="$(mktemp "${TMPDIR:-/tmp}/amesh-dev-daemon.XXXXXX.log")"
+trap 'rm -f "$run_log"' EXIT
+
+if run_node 2>&1 | tee "$run_log"; then
+  exit 0
+fi
+status=${PIPESTATUS[0]}
+
+if grep -q 'resume denied: invalid_reconnect_token' "$run_log"; then
+  echo "Detected stale local node state; re-registering $NODE_ID against $SERVER_URL" >&2
+  rm -f "$STATE_PATH"
+  register_node
+  exec env AMESH_ACPX_PATH="$AMESH_ACPX_PATH" go run ./cmd/amesh-node run --state "$STATE_PATH"
+fi
+
+exit "$status"

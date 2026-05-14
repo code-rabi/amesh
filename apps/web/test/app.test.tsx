@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "../src/App.js";
@@ -319,6 +319,18 @@ describe("App shell", () => {
     await waitFor(() =>
       expect(screen.getByText(/REGISTRATION_TOKEN='server-registered-token'/i)).toBeTruthy()
     );
+  });
+
+  it("shows MCP connection details from the top bar", async () => {
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: /^mcp$/i })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: /^mcp$/i }));
+
+    const dialog = await screen.findByRole("dialog", { name: /configure mcp/i });
+    expect(within(dialog).getByText(/works for clients that accept a standard/i)).toBeTruthy();
+    expect(within(dialog).getAllByText(/amesh_mcp_token/i).length).toBeGreaterThan(0);
+    expect(within(dialog).getAllByText(/\/mcp/i).length).toBeGreaterThan(0);
   });
 
   it("loads the registration token into the empty-state install command", async () => {
