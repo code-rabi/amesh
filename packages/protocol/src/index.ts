@@ -320,7 +320,12 @@ export type McpAgentRegistrationRequest = z.infer<
   typeof mcpAgentRegistrationRequestSchema
 >;
 
-export const mcpEnsureNodeRequestSchema = mcpNodeBindingSchema;
+export const mcpEnsureNodeRequestSchema = z.object({
+  id: z.string().optional(),
+  name: z.string(),
+  host: z.string(),
+  labels: z.array(z.string()).default([])
+});
 export type McpEnsureNodeRequest = z.infer<typeof mcpEnsureNodeRequestSchema>;
 
 export const mcpAgentRegistrationResponseSchema = z.object({

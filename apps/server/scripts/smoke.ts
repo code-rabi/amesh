@@ -41,6 +41,18 @@ async function main() {
     );
 
     await idle();
+    await registerMcpSelf(app, {
+      name: "Claude",
+      hostKind: "claude",
+      executionName: "claude",
+      transport: "npx",
+      node: {
+        id: "node-source",
+        name: "node-source",
+        host: "source-host",
+        labels: ["demo"]
+      }
+    });
 
     const direct = await injectAuthed(app, authCookie, {
       method: "POST",
@@ -278,6 +290,32 @@ async function loginCookie(app: ReturnType<typeof buildApp>) {
   const cookie = response.headers["set-cookie"];
   assert(cookie, "expected auth cookie from login");
   return String(cookie).split(";")[0];
+}
+
+async function registerMcpSelf(
+  app: ReturnType<typeof buildApp>,
+  payload: {
+    name: string;
+    hostKind: string;
+    executionName: string;
+    transport: "url" | "npx";
+    node?: {
+      id: string;
+      name: string;
+      host: string;
+      labels: string[];
+    };
+  }
+) {
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/mcp/register-self",
+    headers: {
+      authorization: "Bearer demo-token"
+    },
+    payload
+  });
+  assert(response.statusCode === 200, "expected MCP self registration to succeed");
 }
 
 async function injectAuthed(
