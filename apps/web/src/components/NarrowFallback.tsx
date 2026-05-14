@@ -1,15 +1,18 @@
 import { useMemo, useState } from "react";
 import type { TopologySnapshot } from "@amesh/protocol";
+import type { AgentRecord } from "@amesh/protocol";
 import { ArrowRight } from "lucide-react";
 
 import { createTriggerRule } from "../api.js";
 import { relativeTime } from "../lib/time.js";
+import { McpPanel } from "./McpPanel.js";
 import { NodeSettingsButton } from "./NodeSettingsButton.js";
 
 type Props = { topology: TopologySnapshot };
 
 export function NarrowFallback({ topology }: Props) {
   const [connectionSourceAgentId, setConnectionSourceAgentId] = useState<string | null>(null);
+  const [mcpAgent, setMcpAgent] = useState<AgentRecord | null>(null);
   const agentsById = useMemo(
     () => new Map(topology.agents.map((agent) => [agent.id, agent])),
     [topology.agents]
@@ -91,6 +94,16 @@ export function NarrowFallback({ topology }: Props) {
                     >
                       <ArrowRight size={13} aria-hidden />
                     </button>
+                    {" "}
+                    <button
+                      type="button"
+                      className="narrow-card__connect"
+                      aria-label={`MCP config for ${agent.name}`}
+                      aria-pressed={mcpAgent?.id === agent.id}
+                      onClick={() => setMcpAgent((prev) => (prev?.id === agent.id ? null : agent))}
+                    >
+                      MCP
+                    </button>
                     {typeof agent.capabilities.cwd === "string" ? (
                       <>
                         {" "}
@@ -142,6 +155,10 @@ export function NarrowFallback({ topology }: Props) {
           </article>
         );
       })}
+
+      {mcpAgent ? (
+        <McpPanel agent={mcpAgent} onClose={() => setMcpAgent(null)} />
+      ) : null}
     </div>
   );
 }

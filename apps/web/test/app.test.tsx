@@ -321,16 +321,31 @@ describe("App shell", () => {
     );
   });
 
-  it("shows MCP connection details from the top bar", async () => {
+  it("shows MCP config for an agent from the agent card", async () => {
+    narrowLayout = true;
+    topologyAgents = [
+      {
+        id: "agent-1",
+        nodeId: "node-1",
+        name: "Planner",
+        backend: "acpx",
+        status: "online",
+        capabilities: { acpxAgent: "planner" }
+      }
+    ];
+    window.history.pushState({}, "", "/");
     render(<App />);
 
-    await waitFor(() => expect(screen.getByRole("button", { name: /^mcp$/i })).toBeTruthy());
-    fireEvent.click(screen.getByRole("button", { name: /^mcp$/i }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /mcp config for planner/i })).toBeTruthy()
+    );
+    fireEvent.click(screen.getByRole("button", { name: /mcp config for planner/i }));
 
-    const dialog = await screen.findByRole("dialog", { name: /configure mcp/i });
-    expect(within(dialog).getByText(/works for clients that accept a standard/i)).toBeTruthy();
-    expect(within(dialog).getAllByText(/amesh_mcp_token/i).length).toBeGreaterThan(0);
-    expect(within(dialog).getAllByText(/\/mcp/i).length).toBeGreaterThan(0);
+    const dialog = await screen.findByRole("dialog", { name: /mcp config for planner/i });
+    const text = dialog.textContent ?? "";
+    expect(text).toContain("agent-1");
+    expect(text).toContain("server-registered-token");
+    expect(text).toContain("/mcp");
   });
 
   it("loads the registration token into the empty-state install command", async () => {
