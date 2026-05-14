@@ -1,10 +1,14 @@
 import type {
+  AgentRecord,
   BrowserRealtimeEvent,
   BrowseNodeDirectoriesQuery,
   BrowseNodeDirectoriesResponse,
   CapabilitySyncPayload,
   CreateSessionRequest,
   InvocationRequestPayload,
+  McpAgentRegistrationRequest,
+  McpDelegateRequest,
+  McpEnsureNodeRequest,
   NodeDirectoryBrowsePayload,
   NodeDirectoryBrowseResultPayload,
   NodeHeartbeatPayload,
@@ -28,6 +32,11 @@ import {
   capabilitySyncPayloadSchema,
   createSessionRequestSchema,
   invocationRequestPayloadSchema,
+  mcpAgentRegistrationRequestSchema,
+  mcpAgentRegistrationResponseSchema,
+  mcpDelegateRequestSchema,
+  mcpEnsureNodeRequestSchema,
+  mcpStatusResponseSchema,
   nodeDirectoryBrowsePayloadSchema,
   nodeDirectoryBrowseResultPayloadSchema,
   nodeHeartbeatPayloadSchema,
@@ -120,6 +129,14 @@ type AppRouteDeps = {
   sendToNode: (nodeId: string, envelope: ProtocolEnvelope) => void;
   nodeLogs: NodeLogStore;
 };
+
+function readBearerToken(header: string | undefined) {
+  if (!header) {
+    return null;
+  }
+  const match = /^Bearer\s+(.+)$/i.exec(header.trim());
+  return match?.[1] ?? null;
+}
 
 function websocketSend(socket: WebSocket, payload: unknown) {
   socket.send(JSON.stringify(payload));
@@ -296,6 +313,19 @@ export function buildApp(options: AppOptions = {}) {
     nodeSocket.send(envelope);
   }
 
+  function controlledTransportAgentId(agent: AgentRecord) {
+    return typeof agent.capabilities.controlledAgentId === "string"
+      ? agent.capabilities.controlledAgentId
+      : agent.id;
+  }
+
+  function resolveLogicalAgentId(nodeId: string, candidate: string | null) {
+    if (!candidate) {
+      return null;
+    }
+    return repository.findAgentByControlledAgentId(nodeId, candidate)?.id ?? candidate;
+  }
+
   function bindSocket(socket: WebSocket, role: Role | null, nodeId: string | null) {
     if (role === "browser") {
       browserSockets.add(socket);
@@ -447,12 +477,34 @@ export function buildApp(options: AppOptions = {}) {
           }
           case "session.event": {
             const payload = sessionEventSchema.parse(envelope.payload) as SessionEventRecord;
+            const sourceAgentId = resolveLogicalAgentId(boundNodeId, payload.sourceAgentId);
+            const targetAgentId = resolveLogicalAgentId(boundNodeId, payload.targetAgentId);
+            const eventPayload =
+              payload.eventType === "session.invocation.requested"
+                ? {
+                    ...payload.payload,
+                    sourceAgentId:
+                      resolveLogicalAgentId(
+                        boundNodeId,
+                        typeof payload.payload.sourceAgentId === "string"
+                          ? payload.payload.sourceAgentId
+                          : null
+                      ) ?? payload.payload.sourceAgentId,
+                    targetAgentId:
+                      resolveLogicalAgentId(
+                        boundNodeId,
+                        typeof payload.payload.targetAgentId === "string"
+                          ? payload.payload.targetAgentId
+                          : null
+                      ) ?? payload.payload.targetAgentId
+                  }
+                : payload.payload;
             repository.appendSessionEvent({
               sessionId: payload.sessionId,
               eventType: payload.eventType,
-              sourceAgentId: payload.sourceAgentId,
-              targetAgentId: payload.targetAgentId,
-              payload: payload.payload
+              sourceAgentId,
+              targetAgentId,
+              payload: eventPayload
             });
             if (payload.eventType === "session.output.completed") {
               repository.updateSessionStatus(payload.sessionId, "completed");
@@ -465,8 +517,13 @@ export function buildApp(options: AppOptions = {}) {
             }
             if (payload.eventType === "session.invocation.requested") {
               routeInvocation(
-                invocationRequestPayloadSchema.parse(payload.payload),
-                payload
+                invocationRequestPayloadSchema.parse(eventPayload),
+                {
+                  ...payload,
+                  sourceAgentId,
+                  targetAgentId,
+                  payload: eventPayload
+                }
               );
             }
             maybePropagateChildCompletion(payload);
@@ -496,6 +553,21 @@ export function buildApp(options: AppOptions = {}) {
   }
 
   function routeInvocation(payload: InvocationRequestPayload, parentEvent: SessionEventRecord) {
+    const sourceAgent = repository.findAgent(payload.sourceAgentId);
+    if (!sourceAgent || !sourceAgent.orchestrator) {
+      const denied = repository.appendSessionEvent({
+        sessionId: payload.parentSessionId,
+        eventType: "session.invocation.denied",
+        sourceAgentId: payload.sourceAgentId,
+        targetAgentId: payload.targetAgentId,
+        payload: {
+          reason: "source_agent_cannot_orchestrate"
+        }
+      });
+      void broadcastSession(denied.sessionId);
+      return;
+    }
+
     const allowed = repository.canInvoke(payload.sourceAgentId, payload.targetAgentId);
     if (!allowed) {
       const denied = repository.appendSessionEvent({
@@ -522,14 +594,14 @@ export function buildApp(options: AppOptions = {}) {
     }
 
     const targetAgent = repository.findAgent(payload.targetAgentId);
-    if (!targetAgent) {
+    if (!targetAgent || !targetAgent.controlled || !targetAgent.nodeId) {
       repository.appendSessionEvent({
         sessionId: payload.parentSessionId,
         eventType: "session.failed",
         sourceAgentId: payload.sourceAgentId,
         targetAgentId: payload.targetAgentId,
         payload: {
-          reason: "target_agent_missing"
+          reason: "target_agent_not_controlled"
         }
       });
       void broadcastSession(payload.parentSessionId);
@@ -563,7 +635,7 @@ export function buildApp(options: AppOptions = {}) {
       target: targetAgent.nodeId,
       payload: sessionStartPayloadSchema.parse({
         sessionId: childSession.id,
-        agentId: payload.targetAgentId,
+        agentId: controlledTransportAgentId(targetAgent),
         prompt: payload.prompt,
         initiator: "agent",
         cwd: childSession.cwd,
@@ -674,6 +746,13 @@ function registerApiRoutes({
   sendToNode,
   nodeLogs
 }: AppRouteDeps) {
+  async function requireMcpAuth(request: FastifyRequest, reply: FastifyReply) {
+    const token = readBearerToken(request.headers.authorization);
+    if (registrationToken && token !== registrationToken) {
+      return reply.code(401).send({ message: "invalid registration token" });
+    }
+  }
+
   app.get("/api/auth/session", async (request: FastifyRequest) => ({
     authenticated: isAuthenticated(request.cookies[authConfig.cookieName]),
     username: authConfig.username
@@ -749,8 +828,18 @@ function registerApiRoutes({
     return state;
   });
 
-  app.post("/api/trigger-rules", { preHandler: requireBrowserAuth }, async (request: FastifyRequest) => {
+  app.post("/api/trigger-rules", { preHandler: requireBrowserAuth }, async (request: FastifyRequest, reply: FastifyReply) => {
     const body = upsertTriggerRuleRequestSchema.parse(request.body) as UpsertTriggerRuleRequest;
+    const sourceAgent = repository.findAgent(body.sourceAgentId);
+    const targetAgent = repository.findAgent(body.targetAgentId);
+    if (!sourceAgent || !sourceAgent.orchestrator) {
+      reply.code(409);
+      return { message: "source agent must be orchestration-capable" };
+    }
+    if (!targetAgent || !targetAgent.controlled) {
+      reply.code(409);
+      return { message: "target agent must be controllable" };
+    }
     const rule = repository.upsertTriggerRule(body);
     await broadcastTopology();
     return rule;
@@ -772,6 +861,10 @@ function registerApiRoutes({
     if (!agent) {
       reply.code(404);
       return { message: "agent not found" };
+    }
+    if (!agent.controlled || !agent.nodeId) {
+      reply.code(409);
+      return { message: "agent is not controllable" };
     }
     if (agent.nodeId !== body.nodeId) {
       reply.code(400);
@@ -812,7 +905,10 @@ function registerApiRoutes({
       target: agent.nodeId,
       payload: sessionStartPayloadSchema.parse({
         sessionId: session.id,
-        agentId: body.agentId,
+        agentId:
+          typeof agent.capabilities.controlledAgentId === "string"
+            ? agent.capabilities.controlledAgentId
+            : body.agentId,
         prompt: body.prompt,
         initiator: "user",
         cwd,
@@ -836,6 +932,10 @@ function registerApiRoutes({
       reply.code(404);
       return { message: "entry agent missing" };
     }
+    if (!agent.controlled || !agent.nodeId) {
+      reply.code(409);
+      return { message: "entry agent is not controllable" };
+    }
 
     repository.appendSessionEvent({
       sessionId: state.session.id,
@@ -855,7 +955,10 @@ function registerApiRoutes({
       target: agent.nodeId,
       payload: sessionInputPayloadSchema.parse({
         sessionId: state.session.id,
-        agentId: agent.id,
+        agentId:
+          typeof agent.capabilities.controlledAgentId === "string"
+            ? agent.capabilities.controlledAgentId
+            : agent.id,
         prompt: body.prompt
       })
     });
@@ -874,6 +977,10 @@ function registerApiRoutes({
     if (!agent) {
       reply.code(404);
       return { message: "entry agent missing" };
+    }
+    if (!agent.controlled || !agent.nodeId) {
+      reply.code(409);
+      return { message: "entry agent is not controllable" };
     }
 
     repository.updateSessionStatus(state.session.id, "cancelled");
@@ -895,13 +1002,97 @@ function registerApiRoutes({
       target: agent.nodeId,
       payload: {
         sessionId: state.session.id,
-        agentId: agent.id,
+        agentId:
+          typeof agent.capabilities.controlledAgentId === "string"
+            ? agent.capabilities.controlledAgentId
+            : agent.id,
         reason: "user_cancelled"
       }
     });
 
     await broadcastSession(state.session.id);
     return repository.getSession(state.session.id);
+  });
+
+  app.post("/api/mcp/ensure-node", { preHandler: requireMcpAuth }, async (request: FastifyRequest) => {
+    const body = mcpEnsureNodeRequestSchema.parse(request.body) as McpEnsureNodeRequest;
+    return repository.ensureNode(body);
+  });
+
+  app.post("/api/mcp/register-self", { preHandler: requireMcpAuth }, async (request: FastifyRequest) => {
+    const body = mcpAgentRegistrationRequestSchema.parse(request.body) as McpAgentRegistrationRequest;
+    const result = repository.upsertMcpAgent(body);
+    await broadcastTopology();
+    return mcpAgentRegistrationResponseSchema.parse(result);
+  });
+
+  app.get("/api/mcp/status/:agentId", { preHandler: requireMcpAuth }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const params = request.params as { agentId: string };
+    const result = repository.mcpStatus(params.agentId);
+    if (!result) {
+      reply.code(404);
+      return { message: "agent not found" };
+    }
+    return mcpStatusResponseSchema.parse(result);
+  });
+
+  app.post("/api/mcp/delegate", { preHandler: requireMcpAuth }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = mcpDelegateRequestSchema.parse(request.body) as McpDelegateRequest;
+    const sourceAgent = repository.findAgent(body.sourceAgentId);
+    if (!sourceAgent || !sourceAgent.orchestrator) {
+      reply.code(409);
+      return { message: "source agent is not orchestration-capable" };
+    }
+    const targetAgent = repository.findAgent(body.targetAgentId);
+    if (!targetAgent || !targetAgent.controlled || !targetAgent.nodeId) {
+      reply.code(409);
+      return { message: "target agent is not controllable" };
+    }
+
+    const node = repository.findNode(targetAgent.nodeId);
+    if (!node || node.status !== "online" || !nodeSockets.has(targetAgent.nodeId)) {
+      reply.code(409);
+      return { message: "target node is offline" };
+    }
+
+    const session = repository.createLinkedSession({
+      entryAgentId: targetAgent.id,
+      initiator: "agent",
+      cwd: body.cwd,
+      parentSessionId: null,
+      sourceAgentId: sourceAgent.id
+    });
+    repository.updateSessionStatus(session.id, "running");
+    repository.appendSessionEvent({
+      sessionId: session.id,
+      eventType: "session.created",
+      sourceAgentId: sourceAgent.id,
+      targetAgentId: targetAgent.id,
+      payload: {
+        prompt: body.prompt
+      }
+    });
+
+    sendToNode(targetAgent.nodeId, {
+      type: "session.start",
+      requestId: nanoid(10),
+      sessionId: session.id,
+      source: "server",
+      target: targetAgent.nodeId,
+      payload: sessionStartPayloadSchema.parse({
+        sessionId: session.id,
+        agentId:
+          typeof targetAgent.capabilities.controlledAgentId === "string"
+            ? targetAgent.capabilities.controlledAgentId
+            : targetAgent.id,
+        prompt: body.prompt,
+        initiator: "agent",
+        cwd: body.cwd,
+        parentSessionId: null
+      })
+    });
+    await broadcastSession(session.id);
+    return repository.getSession(session.id);
   });
 }
 

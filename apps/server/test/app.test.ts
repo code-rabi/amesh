@@ -1,7 +1,7 @@
 import { WebSocket } from "ws";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AddressInfo } from "node:net";
-import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -171,11 +171,8 @@ describe("server app", () => {
       });
       await isolatedApp.close();
 
-      expect(dbFile).toContain("/apps/server/data/amesh.sqlite");
+      expect(dbFile.replaceAll("\\", "/")).toContain("/apps/server/data/amesh.sqlite");
       await access(dbFile);
-      await rm(dbFile, { force: true });
-      await rm(`${dbFile}-shm`, { force: true });
-      await rm(`${dbFile}-wal`, { force: true });
     } finally {
       process.chdir(originalCwd);
     }
@@ -476,6 +473,18 @@ describe("server app", () => {
     );
 
     await waitForIdle();
+    await registerMcpSelf(app, {
+      name: "A",
+      hostKind: "custom",
+      executionName: "a",
+      transport: "npx",
+      node: {
+        id: "node-1",
+        name: "a",
+        host: "a.example",
+        labels: []
+      }
+    });
 
     const create = await injectAuthed(app, authCookie, {
       method: "POST",
@@ -547,6 +556,18 @@ describe("server app", () => {
     );
 
     await waitForIdle();
+    await registerMcpSelf(app, {
+      name: "Claude",
+      hostKind: "claude",
+      executionName: "claude",
+      transport: "npx",
+      node: {
+        id: "node-1",
+        name: "a",
+        host: "a.example",
+        labels: []
+      }
+    });
 
     const rule = await injectAuthed(app, authCookie, {
       method: "POST",
@@ -822,6 +843,33 @@ describe("server app", () => {
   });
 
   it("deletes trigger rules through the control-plane API", async () => {
+    const node1 = new WebSocket(`ws://${address}/ws?role=node&nodeId=node-1`);
+    const node2 = new WebSocket(`ws://${address}/ws?role=node&nodeId=node-2`);
+    await Promise.all([waitForOpen(node1), waitForOpen(node2)]);
+    node1.send(JSON.stringify(registerNode("node-1", "a")));
+    node2.send(JSON.stringify(registerNode("node-2", "b")));
+    await readNodeMessage(node1);
+    await readNodeMessage(node2);
+    node1.send(
+      JSON.stringify(syncCapabilities("node-1", [{ id: "agent-a", name: "A", acpxAgent: "a" }]))
+    );
+    node2.send(
+      JSON.stringify(syncCapabilities("node-2", [{ id: "agent-b", name: "B", acpxAgent: "b" }]))
+    );
+    await waitForIdle();
+    await registerMcpSelf(app, {
+      name: "A",
+      hostKind: "custom",
+      executionName: "a",
+      transport: "npx",
+      node: {
+        id: "node-1",
+        name: "a",
+        host: "a.example",
+        labels: []
+      }
+    });
+
     const create = await injectAuthed(app, authCookie, {
       method: "POST",
       url: "/api/trigger-rules",
@@ -844,6 +892,90 @@ describe("server app", () => {
       url: "/api/trigger-rules"
     });
     expect(rules.json()).toEqual([]);
+    node1.close();
+    node2.close();
+  });
+
+  it("registers an MCP npx agent onto an existing controlled agent and exposes delegate/status APIs", async () => {
+    const node = new WebSocket(`ws://${address}/ws?role=node&nodeId=node-1`);
+    await waitForOpen(node);
+    node.send(JSON.stringify(registerNode("node-1", "node-a")));
+    await readNodeMessage(node);
+    node.send(
+      JSON.stringify(syncCapabilities("node-1", [{ id: "agent-a", name: "Codex", acpxAgent: "codex" }]))
+    );
+    await waitForIdle();
+
+    const register = await app.inject({
+      method: "POST",
+      url: "/api/mcp/register-self",
+      headers: {
+        authorization: "Bearer token"
+      },
+      payload: {
+        name: "Codex",
+        hostKind: "codex",
+        executionName: "codex",
+        transport: "npx",
+        controlled: true,
+        node: {
+          id: "node-1",
+          name: "node-a",
+          host: "node-a.example",
+          labels: []
+        }
+      }
+    });
+    expect(register.statusCode).toBe(200);
+    expect(register.json().agent).toMatchObject({
+      id: "agent-a",
+      orchestrator: true,
+      controlled: true,
+      nodeId: "node-1"
+    });
+
+    const status = await app.inject({
+      method: "GET",
+      url: "/api/mcp/status/agent-a",
+      headers: {
+        authorization: "Bearer token"
+      }
+    });
+    expect(status.statusCode).toBe(200);
+    expect(status.json()).toMatchObject({
+      agent: {
+        id: "agent-a",
+        orchestrator: true,
+        controlled: true
+      },
+      node: {
+        id: "node-1"
+      }
+    });
+
+    const delegateResponse = await app.inject({
+      method: "POST",
+      url: "/api/mcp/delegate",
+      headers: {
+        authorization: "Bearer token"
+      },
+      payload: {
+        sourceAgentId: "agent-a",
+        targetAgentId: "agent-a",
+        prompt: "delegate to yourself"
+      }
+    });
+    expect(delegateResponse.statusCode).toBe(200);
+
+    const startMessage = await readNodeMessage(node);
+    expect(startMessage).toMatchObject({
+      type: "session.start",
+      payload: {
+        agentId: "agent-a",
+        initiator: "agent"
+      }
+    });
+    node.close();
   });
 
   it("sends an update command to an online node through the admin API", async () => {
@@ -1142,6 +1274,31 @@ async function loginCookie(app: ReturnType<typeof buildApp>) {
     throw new Error("auth cookie missing");
   }
   return String(cookie).split(";")[0];
+}
+
+async function registerMcpSelf(
+  app: ReturnType<typeof buildApp>,
+  payload: {
+    name: string;
+    hostKind: string;
+    executionName: string;
+    transport: "url" | "npx";
+    node?: {
+      id: string;
+      name: string;
+      host: string;
+      labels: string[];
+    };
+  }
+) {
+  return await app.inject({
+    method: "POST",
+    url: "/api/mcp/register-self",
+    headers: {
+      authorization: "Bearer token"
+    },
+    payload
+  });
 }
 
 async function injectAuthed(

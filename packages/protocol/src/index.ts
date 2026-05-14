@@ -6,6 +6,24 @@ export type NodeStatus = z.infer<typeof nodeStatusSchema>;
 export const agentStatusSchema = z.enum(["online", "offline", "error"]);
 export type AgentStatus = z.infer<typeof agentStatusSchema>;
 
+export const agentBackendSchema = z.enum(["acpx", "mcp", "hybrid"]);
+export type AgentBackend = z.infer<typeof agentBackendSchema>;
+
+export const agentHostKindSchema = z.enum([
+  "codex",
+  "claude",
+  "gemini",
+  "custom"
+]);
+export type AgentHostKind = z.infer<typeof agentHostKindSchema>;
+
+export const agentEndpointTransportSchema = z.enum([
+  "acp",
+  "mcp-url",
+  "mcp-npx"
+]);
+export type AgentEndpointTransport = z.infer<typeof agentEndpointTransportSchema>;
+
 export const triggerModeSchema = z.enum(["allow", "deny"]);
 export type TriggerMode = z.infer<typeof triggerModeSchema>;
 
@@ -41,11 +59,24 @@ export type NodeRecord = z.infer<typeof nodeSchema>;
 
 export const agentSchema = z.object({
   id: z.string(),
-  nodeId: z.string(),
+  nodeId: z.string().nullable().default(null),
   name: z.string(),
-  backend: z.literal("acpx"),
+  backend: agentBackendSchema,
+  hostKind: agentHostKindSchema,
+  executionName: z.string().nullable().default(null),
+  fingerprint: z.string().nullable().default(null),
+  orchestrator: z.boolean().default(false),
+  controlled: z.boolean().default(false),
   status: agentStatusSchema,
-  capabilities: payloadSchema
+  capabilities: payloadSchema,
+  endpoints: z
+    .array(
+      z.object({
+        transport: agentEndpointTransportSchema,
+        metadata: payloadSchema.default({})
+      })
+    )
+    .default([])
 });
 export type AgentRecord = z.infer<typeof agentSchema>;
 
@@ -263,6 +294,57 @@ export const topologySnapshotSchema = z.object({
   triggerRules: z.array(triggerRuleSchema)
 });
 export type TopologySnapshot = z.infer<typeof topologySnapshotSchema>;
+
+export const mcpTransportSchema = z.enum(["url", "npx"]);
+export type McpTransport = z.infer<typeof mcpTransportSchema>;
+
+export const mcpNodeBindingSchema = z.object({
+  id: z.string().optional(),
+  name: z.string(),
+  host: z.string(),
+  labels: z.array(z.string()).default([])
+});
+export type McpNodeBinding = z.infer<typeof mcpNodeBindingSchema>;
+
+export const mcpAgentRegistrationRequestSchema = z.object({
+  name: z.string(),
+  hostKind: agentHostKindSchema,
+  executionName: z.string().optional(),
+  fingerprint: z.string().optional(),
+  transport: mcpTransportSchema,
+  controlled: z.boolean().default(false),
+  node: mcpNodeBindingSchema.optional(),
+  metadata: payloadSchema.default({})
+});
+export type McpAgentRegistrationRequest = z.infer<
+  typeof mcpAgentRegistrationRequestSchema
+>;
+
+export const mcpEnsureNodeRequestSchema = mcpNodeBindingSchema;
+export type McpEnsureNodeRequest = z.infer<typeof mcpEnsureNodeRequestSchema>;
+
+export const mcpAgentRegistrationResponseSchema = z.object({
+  agent: agentSchema,
+  node: nodeSchema.nullable().default(null),
+  reconnectToken: z.string().nullable().default(null)
+});
+export type McpAgentRegistrationResponse = z.infer<
+  typeof mcpAgentRegistrationResponseSchema
+>;
+
+export const mcpStatusResponseSchema = z.object({
+  agent: agentSchema,
+  node: nodeSchema.nullable().default(null)
+});
+export type McpStatusResponse = z.infer<typeof mcpStatusResponseSchema>;
+
+export const mcpDelegateRequestSchema = z.object({
+  sourceAgentId: z.string(),
+  targetAgentId: z.string(),
+  prompt: z.string(),
+  cwd: z.string().nullable().default(null)
+});
+export type McpDelegateRequest = z.infer<typeof mcpDelegateRequestSchema>;
 
 export const createSessionRequestSchema = z.object({
   nodeId: z.string(),

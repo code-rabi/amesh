@@ -15,12 +15,17 @@ export const nodesTable = sqliteTable("nodes", {
 export const agentsTable = sqliteTable("agents", {
   id: text("id").primaryKey(),
   nodeId: text("node_id")
-    .notNull()
     .references(() => nodesTable.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   backend: text("backend").notNull(),
+  hostKind: text("host_kind").notNull().default("custom"),
+  executionName: text("execution_name"),
+  fingerprint: text("fingerprint"),
+  orchestrator: integer("orchestrator", { mode: "boolean" }).notNull().default(false),
+  controlled: integer("controlled", { mode: "boolean" }).notNull().default(false),
   status: text("status").notNull(),
-  capabilities: text("capabilities").notNull()
+  capabilities: text("capabilities").notNull(),
+  endpoints: text("endpoints").notNull().default("[]")
 });
 
 export const triggerRulesTable = sqliteTable("trigger_rules", {

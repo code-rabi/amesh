@@ -10,6 +10,7 @@ import { createContext, useContext, useMemo, useState, type ReactNode } from "re
 import type { AgentRecord, TopologySnapshot } from "@amesh/protocol";
 
 import { AgentAvatar } from "./AgentAvatar.js";
+import { agentRoleBadges, getAgentNodeId } from "../lib/agentRoles.js";
 import { useAmeshThreadRuntime } from "../lib/assistantRuntime.js";
 import { relativeTime } from "../lib/time.js";
 import type { SessionView } from "../types.js";
@@ -177,9 +178,12 @@ function NewSessionIntro({
   onToggleAcp: () => void;
 }) {
   const host =
-    topology.nodes.find((node) => node.id === agent.nodeId)?.name ?? agent.nodeId;
+    topology.nodes.find((node) => node.id === getAgentNodeId(agent))?.name ??
+    getAgentNodeId(agent) ??
+    "External orchestrator";
   const cwd = typeof agent.capabilities.cwd === "string" ? agent.capabilities.cwd : null;
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
+  const roleBadges = agentRoleBadges(agent);
   return (
     <header className="chat__header">
       <AcpToggle showAcp={showAcp} onToggle={onToggleAcp} />
@@ -205,6 +209,15 @@ function NewSessionIntro({
                 </>
               ) : null}
             </div>
+            {roleBadges.length > 0 ? (
+              <div className="node-card__role-row">
+                {roleBadges.map((badge) => (
+                  <span key={badge} className="role-badge">
+                    {badge}
+                  </span>
+                ))}
+              </div>
+            ) : null}
           </div>
         </div>
         {launchAgents.length > 1 && onSelectLaunchAgent ? (

@@ -716,6 +716,28 @@ button:focus { outline: none; }
   margin-top: 4px;
   word-break: break-all;
 }
+.node-card__role-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+.role-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 0 6px;
+  border: 1px solid var(--c-line);
+  border-radius: var(--r-xs);
+  background: var(--c-surface);
+  color: var(--c-mute);
+  font: var(--t-label);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.role-badge--inline {
+  margin-right: 4px;
+}
 .node-card__agent-status {
   font: var(--t-label);
   letter-spacing: 0.07em;
@@ -740,6 +762,9 @@ button:focus { outline: none; }
   font: var(--t-body);
   color: var(--c-mute);
   font-style: italic;
+}
+.standalone-agent-card .node-card__header {
+  border-bottom-color: var(--c-accent-line);
 }
 
 .node-settings__trigger {

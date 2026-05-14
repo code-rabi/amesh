@@ -1,6 +1,7 @@
 import * as ElkModule from "elkjs/lib/elk.bundled.js";
 import type { ElkNode } from "elkjs/lib/elk.bundled.js";
 import type { TopologySnapshot } from "@amesh/protocol";
+import { agentCanOrchestrate, getAgentNodeId } from "./agentRoles.js";
 
 type ElkInstance = { layout: (graph: ElkNode) => Promise<ElkNode> };
 type ElkCtor = new () => ElkInstance;
@@ -25,19 +26,37 @@ export async function layoutTopology(
 ): Promise<Map<string, { x: number; y: number }>> {
   const agentsByNode = new Map<string, number>();
   for (const agent of snapshot.agents) {
-    agentsByNode.set(agent.nodeId, (agentsByNode.get(agent.nodeId) ?? 0) + 1);
+    const nodeId = getAgentNodeId(agent);
+    if (!nodeId) continue;
+    agentsByNode.set(nodeId, (agentsByNode.get(nodeId) ?? 0) + 1);
   }
 
   const agentToNode = new Map<string, string>();
   for (const agent of snapshot.agents) {
-    agentToNode.set(agent.id, agent.nodeId);
+    const nodeId = getAgentNodeId(agent);
+    if (nodeId) {
+      agentToNode.set(agent.id, nodeId);
+      continue;
+    }
+    if (agentCanOrchestrate(agent)) {
+      agentToNode.set(agent.id, `agent:${agent.id}`);
+    }
   }
 
-  const elkNodes: ElkNode[] = snapshot.nodes.map((node) => ({
-    id: node.id,
-    width: NODE_WIDTH,
-    height: nodeHeight(agentsByNode.get(node.id) ?? 0)
-  }));
+  const elkNodes: ElkNode[] = [
+    ...snapshot.nodes.map((node) => ({
+      id: node.id,
+      width: NODE_WIDTH,
+      height: nodeHeight(agentsByNode.get(node.id) ?? 0)
+    })),
+    ...snapshot.agents
+      .filter((agent) => getAgentNodeId(agent) === null && agentCanOrchestrate(agent))
+      .map((agent) => ({
+        id: `agent:${agent.id}`,
+        width: NODE_WIDTH,
+        height: nodeHeight(1)
+      }))
+  ];
 
   const edges = snapshot.triggerRules
     .map((rule) => ({
@@ -75,7 +94,7 @@ export async function layoutTopology(
     return positions;
   } catch {
     const positions = new Map<string, { x: number; y: number }>();
-    snapshot.nodes.forEach((node, index) => {
+    elkNodes.forEach((node, index) => {
       positions.set(node.id, { x: (index % 3) * 320, y: Math.floor(index / 3) * 280 });
     });
     return positions;

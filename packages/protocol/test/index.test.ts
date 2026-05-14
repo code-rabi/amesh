@@ -4,6 +4,9 @@ import {
   capabilitySchema,
   browseNodeDirectoriesResponseSchema,
   browserRealtimeEventSchema,
+  mcpAgentRegistrationRequestSchema,
+  mcpAgentRegistrationResponseSchema,
+  mcpDelegateRequestSchema,
   nodeDirectoryBrowsePayloadSchema,
   parseProtocolEnvelope,
   protocolEnvelopeSchema,
@@ -93,5 +96,60 @@ describe("protocol schema", () => {
 
     expect(payload.path).toBe("");
     expect(response.entries[0]?.path).toBe("/srv/work/repo-a");
+  });
+
+  it("validates MCP registration payloads and responses", () => {
+    const request = mcpAgentRegistrationRequestSchema.parse({
+      name: "Codex",
+      hostKind: "codex",
+      executionName: "codex",
+      transport: "npx",
+      controlled: true,
+      node: {
+        name: "node-a",
+        host: "node-a.example",
+        labels: []
+      }
+    });
+    const response = mcpAgentRegistrationResponseSchema.parse({
+      agent: {
+        id: "agent-a",
+        nodeId: "node-1",
+        name: "Codex",
+        backend: "hybrid",
+        hostKind: "codex",
+        executionName: "codex",
+        fingerprint: null,
+        orchestrator: true,
+        controlled: true,
+        status: "online",
+        capabilities: {},
+        endpoints: []
+      },
+      node: {
+        id: "node-1",
+        name: "node-a",
+        status: "pending",
+        host: "node-a.example",
+        labels: [],
+        paths: [],
+        registeredAt: new Date().toISOString(),
+        lastSeenAt: null
+      },
+      reconnectToken: "token"
+    });
+
+    expect(request.node?.labels).toEqual([]);
+    expect(response.agent.orchestrator).toBe(true);
+  });
+
+  it("validates MCP delegate requests", () => {
+    const request = mcpDelegateRequestSchema.parse({
+      sourceAgentId: "agent-source",
+      targetAgentId: "agent-target",
+      prompt: "delegate this"
+    });
+
+    expect(request.cwd).toBeNull();
   });
 });

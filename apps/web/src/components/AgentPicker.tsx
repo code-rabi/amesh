@@ -1,6 +1,7 @@
 import type { AgentRecord } from "@amesh/protocol";
 
 import { AgentAvatar } from "./AgentAvatar.js";
+import { agentCanLaunchSessions, agentRoleBadges } from "../lib/agentRoles.js";
 
 type Props = {
   agents: AgentRecord[];
@@ -31,20 +32,21 @@ export function AgentPicker({ agents, nodeName, folderLabel, selectedAgentId, on
         </div>
         <p>
           {nodeName
-            ? "Choose one of the agents exposed by this node. Folder selection is separate."
+            ? "Choose one of the controllable agents exposed by this node. Folder selection is separate."
             : "Pick a node to choose a launch target."}
         </p>
       </header>
       {agents.length === 0 ? (
         <div className="agent-picker__empty">
           {nodeName
-            ? "No agents are exposed by this node yet."
+            ? "No controllable agents are exposed by this node yet."
             : "Pick a node to start a session."}
         </div>
       ) : (
         <ul className="agent-picker__list">
           {ranked.map((agent) => {
-            const disabled = agent.status !== "online";
+            const disabled = agent.status !== "online" || !agentCanLaunchSessions(agent);
+            const roleBadges = agentRoleBadges(agent);
             return (
               <li key={agent.id}>
                 <button
@@ -62,6 +64,15 @@ export function AgentPicker({ agents, nodeName, folderLabel, selectedAgentId, on
                       <div className="agent-picker__sub">
                         <span className="font-mono">{agent.id}</span>
                       </div>
+                      {roleBadges.length > 0 ? (
+                        <div className="node-card__role-row">
+                          {roleBadges.map((badge) => (
+                            <span key={badge} className="role-badge">
+                              {badge}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                   <div className="agent-picker__aside">

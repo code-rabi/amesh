@@ -17,8 +17,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TopologySnapshot, TriggerMode } from "@amesh/protocol";
 
 import { createTriggerRule, deleteTriggerRule } from "../api.js";
+import {
+  agentCanBeControlled,
+  agentCanOrchestrate,
+  getAgentNodeId
+} from "../lib/agentRoles.js";
 import { layoutTopology } from "../lib/elkLayout.js";
 import { NodeCard, type NodeCardData } from "./NodeCard.js";
+import { StandaloneAgentCard, type StandaloneAgentCardData } from "./StandaloneAgentCard.js";
 import { TriggerEdge, type TriggerEdgeData } from "./TriggerEdge.js";
 
 type Props = {
@@ -26,10 +32,19 @@ type Props = {
 };
 
 type NodeCardNode = Node<{ data: NodeCardData }, "nodeCard">;
+type StandaloneAgentNode = Node<{ data: StandaloneAgentCardData }, "standaloneAgentCard">;
+type TopologyCanvasNode = NodeCardNode | StandaloneAgentNode;
 type TriggerEdgeRecord = Edge<{ data: TriggerEdgeData }, "trigger">;
 
-const nodeTypes = { nodeCard: NodeCard };
+const nodeTypes = { nodeCard: NodeCard, standaloneAgentCard: StandaloneAgentCard };
 const edgeTypes = { trigger: TriggerEdge };
+
+function topologyCardIdForAgent(agent: TopologySnapshot["agents"][number]): string | null {
+  const nodeId = getAgentNodeId(agent);
+  if (nodeId) return nodeId;
+  if (agentCanOrchestrate(agent)) return `agent:${agent.id}`;
+  return null;
+}
 
 function edgeStyle(mode: TriggerMode) {
   if (mode === "deny") {
@@ -50,7 +65,7 @@ export function TopologyCanvas(props: Props) {
 }
 
 function CanvasInner({ topology }: Props) {
-  const [nodes, setNodes, onNodesChange] = useNodesState<NodeCardNode>([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<TopologyCanvasNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<TriggerEdgeRecord>([]);
   const positionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const [toast, setToast] = useState<string | null>(null);
@@ -75,6 +90,20 @@ function CanvasInner({ topology }: Props) {
         (rule) =>
           rule.sourceAgentId === sourceAgentId && rule.targetAgentId === targetAgentId
       );
+      const source = agentsById.get(sourceAgentId);
+      const target = agentsById.get(targetAgentId);
+      if (!source || !target) {
+        showToast("Agent is no longer available.");
+        return false;
+      }
+      if (!agentCanOrchestrate(source)) {
+        showToast(`${source.name} cannot originate trigger rules.`);
+        return false;
+      }
+      if (!agentCanBeControlled(target)) {
+        showToast(`${target.name} cannot receive delegated work.`);
+        return false;
+      }
       if (existing && existing.mode === "allow") {
         showToast("Already connected. Click the edge to change.");
         return false;
@@ -92,12 +121,16 @@ function CanvasInner({ topology }: Props) {
         return false;
       }
     },
-    [topology.triggerRules]
+    [agentsById, topology.triggerRules]
   );
 
   const pickConnectionEndpoint = useCallback(
     async (agent: TopologySnapshot["agents"][number]) => {
       if (!connectionSourceAgentId) {
+        if (!agentCanOrchestrate(agent)) {
+          showToast(`${agent.name} cannot originate trigger rules.`);
+          return;
+        }
         setConnectionSourceAgentId(agent.id);
         showToast(`Pick a target for ${agent.name}.`);
         return;
@@ -105,6 +138,10 @@ function CanvasInner({ topology }: Props) {
       if (connectionSourceAgentId === agent.id) {
         setConnectionSourceAgentId(null);
         showToast("Connection cancelled.");
+        return;
+      }
+      if (!agentCanBeControlled(agent)) {
+        showToast(`${agent.name} cannot receive delegated work.`);
         return;
       }
       const created = await createAllowRule(connectionSourceAgentId, agent.id);
@@ -120,7 +157,14 @@ function CanvasInner({ topology }: Props) {
     let cancelled = false;
 
     async function sync() {
-      const unknown = topology.nodes.filter((node) => !positionsRef.current.has(node.id));
+      const standaloneAgents = topology.agents.filter(
+        (agent) => getAgentNodeId(agent) === null && agentCanOrchestrate(agent)
+      );
+      const livingCardIds = new Set<string>([
+        ...topology.nodes.map((node) => node.id),
+        ...standaloneAgents.map((agent) => `agent:${agent.id}`)
+      ]);
+      const unknown = [...livingCardIds].filter((id) => !positionsRef.current.has(id));
       if (unknown.length > 0 || positionsRef.current.size === 0) {
         const computed = await layoutTopology(topology);
         if (cancelled) return;
@@ -131,14 +175,13 @@ function CanvasInner({ topology }: Props) {
         }
       }
 
-      const livingIds = new Set(topology.nodes.map((n) => n.id));
       for (const id of [...positionsRef.current.keys()]) {
-        if (!livingIds.has(id)) positionsRef.current.delete(id);
+        if (!livingCardIds.has(id)) positionsRef.current.delete(id);
       }
 
       const nextNodes: NodeCardNode[] = topology.nodes.map((node) => {
         const position = positionsRef.current.get(node.id) ?? { x: 0, y: 0 };
-        const agents = topology.agents.filter((agent) => agent.nodeId === node.id);
+        const agents = topology.agents.filter((agent) => getAgentNodeId(agent) === node.id);
         return {
           id: node.id,
           type: "nodeCard",
@@ -156,9 +199,28 @@ function CanvasInner({ topology }: Props) {
         };
       });
 
+      const nextStandaloneNodes: StandaloneAgentNode[] = standaloneAgents.map((agent) => {
+        const cardId = `agent:${agent.id}`;
+        const position = positionsRef.current.get(cardId) ?? { x: 0, y: 0 };
+        return {
+          id: cardId,
+          type: "standaloneAgentCard",
+          position,
+          data: {
+            data: {
+              agent,
+              connectionSourceAgentId,
+              connectionSourceAgentName,
+              onConnectionPick: pickConnectionEndpoint
+            }
+          } as { data: StandaloneAgentCardData },
+          draggable: true
+        };
+      });
+
       setNodes((current) => {
         const indexed = new Map(current.map((n) => [n.id, n]));
-        return nextNodes.map((next) => {
+        return [...nextNodes, ...nextStandaloneNodes].map((next) => {
           const existing = indexed.get(next.id);
           if (!existing) return next;
           return { ...next, position: existing.position ?? next.position };
@@ -218,12 +280,15 @@ function CanvasInner({ topology }: Props) {
           onFlip: () => flip(rule.sourceAgentId, rule.targetAgentId, rule.mode),
           onRemove: () => remove(rule.id)
         };
+        const sourceCardId = topologyCardIdForAgent(source);
+        const targetCardId = topologyCardIdForAgent(target);
+        if (!sourceCardId || !targetCardId) return null;
 
         const edge: TriggerEdgeRecord = {
           id: rule.id,
           type: "trigger",
-          source: source.nodeId,
-          target: target.nodeId,
+          source: sourceCardId,
+          target: targetCardId,
           sourceHandle: source.id,
           targetHandle: target.id,
           data: { data },
@@ -254,8 +319,12 @@ function CanvasInner({ topology }: Props) {
 
   const isValidConnection: IsValidConnection = useCallback((connection) => {
     if (!connection.sourceHandle || !connection.targetHandle) return false;
-    return connection.sourceHandle !== connection.targetHandle;
-  }, []);
+    if (connection.sourceHandle === connection.targetHandle) return false;
+    const source = agentsById.get(connection.sourceHandle);
+    const target = agentsById.get(connection.targetHandle);
+    if (!source || !target) return false;
+    return agentCanOrchestrate(source) && agentCanBeControlled(target);
+  }, [agentsById]);
 
   return (
     <>

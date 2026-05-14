@@ -5,6 +5,7 @@ import { AgentPicker } from "../components/AgentPicker.js";
 import { AssistantChat } from "../components/AssistantChat.js";
 import { NodeRail } from "../components/NodeRail.js";
 import { SessionList } from "../components/SessionList.js";
+import { agentCanLaunchSessions, getAgentNodeId } from "../lib/agentRoles.js";
 import { useSessions } from "../lib/sessionsContext.js";
 import { useTopology } from "../lib/topologyContext.js";
 
@@ -59,18 +60,26 @@ export function SessionsRoute() {
   const sessionEntryAgent = activeSession
     ? topology.agents.find((agent) => agent.id === activeSession.session.entryAgentId) ?? null
     : null;
-  const selectedNodeId = sessionEntryAgent?.nodeId ?? focusedNodeId ?? focusedAgent?.nodeId ?? null;
+  const selectedNodeId =
+    (sessionEntryAgent ? getAgentNodeId(sessionEntryAgent) : null) ??
+    focusedNodeId ??
+    (focusedAgent ? getAgentNodeId(focusedAgent) : null) ??
+    null;
   const selectedNode = topology.nodes.find((node) => node.id === selectedNodeId) ?? null;
   const nodeAgents = useMemo(
-    () => topology.agents.filter((agent) => agent.nodeId === selectedNodeId),
+    () => topology.agents.filter((agent) => getAgentNodeId(agent) === selectedNodeId),
     [selectedNodeId, topology.agents]
+  );
+  const launchAgents = useMemo(
+    () => nodeAgents.filter((agent) => agentCanLaunchSessions(agent)),
+    [nodeAgents]
   );
   const agentCwds = useMemo(
     () =>
-      nodeAgents
+      launchAgents
         .map((agent) => readAgentCwd(agent))
         .filter((cwd): cwd is string => Boolean(cwd)),
-    [nodeAgents]
+    [launchAgents]
   );
   const availableFolders = useMemo(
     () => (selectedNode ? collectNodeFolders(selectedNode.paths, agentCwds) : []),
@@ -84,8 +93,8 @@ export function SessionsRoute() {
   const selectedAgent =
     sessionEntryAgent ??
     focusedAgent ??
-    nodeAgents.find((agent) => agent.status === "online") ??
-    nodeAgents[0] ??
+    launchAgents.find((agent) => agent.status === "online") ??
+    launchAgents[0] ??
     null;
   const activeAgent = sessionEntryAgent ?? selectedAgent;
   const currentFolderLabel = readFolderLabel(selectedFolder);
@@ -111,7 +120,7 @@ export function SessionsRoute() {
     }
     return sessions.summaries.filter((session) => {
       const agent = agentsById.get(session.entryAgentId);
-      return agent?.nodeId === selectedNodeId && (session.cwd ?? null) === selectedFolder;
+      return getAgentNodeId(agent) === selectedNodeId && (session.cwd ?? null) === selectedFolder;
     });
   }, [agentsById, selectedFolder, selectedNodeId, sessions.summaries]);
 
@@ -156,6 +165,7 @@ export function SessionsRoute() {
         selectedFolder={selectedFolder}
         selectedId={activeSession?.session.id ?? null}
         loading={sessions.loading}
+        canCreateSession={launchAgents.length > 0}
         onSelect={navigateToSession}
         onSelectFolder={(folder) => {
           void sessions.selectSession(null);
@@ -188,7 +198,7 @@ export function SessionsRoute() {
           />
         ) : !activeAgent && !activeSession ? (
           <AgentPicker
-            agents={nodeAgents}
+            agents={launchAgents}
             nodeName={selectedNode?.name ?? null}
             folderLabel={currentFolderLabel}
             selectedAgentId={null}
@@ -207,7 +217,7 @@ export function SessionsRoute() {
             session={activeSession}
             activeAgent={activeAgent}
             topology={topology}
-            launchAgents={nodeAgents}
+            launchAgents={launchAgents}
             onSelectLaunchAgent={(agentId) =>
               navigateToScope({
                 nodeId: selectedNodeId,
@@ -217,7 +227,11 @@ export function SessionsRoute() {
               })
             }
             scopeLabel={selectedNode ? `${selectedNode.name} · ${currentFolderLabel}` : currentFolderLabel}
-            sessionTarget={selectedNodeId ? { nodeId: selectedNodeId, cwd: selectedFolder } : null}
+            sessionTarget={
+              selectedNodeId && activeAgent && agentCanLaunchSessions(activeAgent)
+                ? { nodeId: selectedNodeId, cwd: selectedFolder }
+                : null
+            }
           />
         )}
       </main>

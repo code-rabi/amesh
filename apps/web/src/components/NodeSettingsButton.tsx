@@ -20,6 +20,7 @@ import {
   requestNodeUpdate,
   updateNodePaths
 } from "../api.js";
+import { agentCanLaunchSessions, agentRoleBadges, getAgentNodeId } from "../lib/agentRoles.js";
 import { useTopology } from "../lib/topologyContext.js";
 
 type Props = {
@@ -446,7 +447,9 @@ export function NodeSettingsButton({
                               typeof agent.capabilities.error === "string"
                                 ? agent.capabilities.error
                                 : null;
-                            const disabled = agent.status !== "online" || nodeOffline;
+                            const disabled =
+                              agent.status !== "online" || nodeOffline || !agentCanLaunchSessions(agent);
+                            const roleBadges = agentRoleBadges(agent);
                             return (
                               <li key={agent.id} className="node-settings__agent-row">
                                 <div className="node-settings__agent-body">
@@ -460,6 +463,15 @@ export function NodeSettingsButton({
                                       </>
                                     ) : null}
                                   </div>
+                                  {roleBadges.length > 0 ? (
+                                    <div className="node-card__role-row">
+                                      {roleBadges.map((badge) => (
+                                        <span key={badge} className="role-badge">
+                                          {badge}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  ) : null}
                                   {errorDetail ? (
                                     <div className="node-settings__agent-error">{errorDetail}</div>
                                   ) : null}
@@ -476,7 +488,7 @@ export function NodeSettingsButton({
                                     void navigate({
                                       to: "/sessions",
                                       search: {
-                                        node: agent.nodeId,
+                                        node: getAgentNodeId(agent) ?? undefined,
                                         folder,
                                         agent: agent.id,
                                         session: undefined

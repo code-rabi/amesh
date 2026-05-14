@@ -12,6 +12,7 @@ type Props = {
   selectedFolder: string | null;
   selectedId: string | null;
   loading: boolean;
+  canCreateSession: boolean;
   onSelect: (id: string) => void;
   onSelectFolder: (folder: string | null) => void;
   onNew: () => void;
@@ -50,6 +51,7 @@ export function SessionList({
   selectedFolder,
   selectedId,
   loading,
+  canCreateSession,
   onSelect,
   onSelectFolder,
   onNew
@@ -71,8 +73,14 @@ export function SessionList({
             type="button"
             className="btn btn-secondary"
             onClick={onNew}
-            disabled={!selectedNode}
-            title={selectedNode ? `New session on ${selectedNode.name}` : "Pick a node first"}
+            disabled={!selectedNode || !canCreateSession}
+            title={
+              !selectedNode
+                ? "Pick a node first"
+                : canCreateSession
+                  ? `New session on ${selectedNode.name}`
+                  : "This node has no controllable agents"
+            }
           >
             New
           </button>
@@ -107,7 +115,9 @@ export function SessionList({
       {loading && sessions.length === 0 ? null : sorted.length === 0 ? (
         <div className="sessions-rail__empty">
           {selectedNode
-            ? `No sessions in this folder yet. Hit New to start one.`
+            ? canCreateSession
+              ? `No sessions in this folder yet. Hit New to start one.`
+              : "No controllable agents on this node yet."
             : "No sessions yet. Pick a node on the left."}
         </div>
       ) : (

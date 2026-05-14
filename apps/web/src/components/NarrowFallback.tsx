@@ -3,6 +3,14 @@ import type { TopologySnapshot } from "@amesh/protocol";
 import { ArrowRight } from "lucide-react";
 
 import { createTriggerRule } from "../api.js";
+import {
+  agentCanBeControlled,
+  agentCanLaunchSessions,
+  agentCanOrchestrate,
+  agentRoleBadges,
+  agentSecondaryLabel,
+  getAgentNodeId
+} from "../lib/agentRoles.js";
 import { relativeTime } from "../lib/time.js";
 import { NodeSettingsButton } from "./NodeSettingsButton.js";
 
@@ -18,12 +26,20 @@ export function NarrowFallback({ topology }: Props) {
     connectionSourceAgentId ? agentsById.get(connectionSourceAgentId)?.name ?? null : null;
 
   async function pickConnectionEndpoint(agentId: string) {
+    const agent = agentsById.get(agentId);
+    if (!agent) return;
     if (!connectionSourceAgentId) {
+      if (!agentCanOrchestrate(agent)) {
+        return;
+      }
       setConnectionSourceAgentId(agentId);
       return;
     }
     if (connectionSourceAgentId === agentId) {
       setConnectionSourceAgentId(null);
+      return;
+    }
+    if (!agentCanBeControlled(agent)) {
       return;
     }
     await createTriggerRule({
@@ -40,12 +56,12 @@ export function NarrowFallback({ topology }: Props) {
         Compact topology view. Use the arrow controls on online agents to create allow rules.
       </div>
 
-      {topology.nodes.length === 0 ? (
+      {topology.nodes.length === 0 && topology.agents.length === 0 ? (
         <div className="note">No nodes yet.</div>
       ) : null}
 
       {topology.nodes.map((node) => {
-        const agents = topology.agents.filter((agent) => agent.nodeId === node.id);
+        const agents = topology.agents.filter((agent) => getAgentNodeId(agent) === node.id);
         const rules = topology.triggerRules.filter((rule) =>
           agents.some((agent) => agent.id === rule.sourceAgentId)
         );
@@ -75,6 +91,12 @@ export function NarrowFallback({ topology }: Props) {
                   <li key={agent.id}>
                     {agent.name} <span className="host">({agent.status})</span>
                     {" "}
+                    {agentRoleBadges(agent).map((badge) => (
+                      <span key={badge} className="role-badge role-badge--inline">
+                        {badge}
+                      </span>
+                    ))}
+                    {" "}
                     <button
                       type="button"
                       className="narrow-card__connect"
@@ -86,7 +108,15 @@ export function NarrowFallback({ topology }: Props) {
                           : `Start connection from ${agent.name}`
                       }
                       aria-pressed={connectionSourceAgentId === agent.id}
-                      disabled={node.status !== "online" || agent.status !== "online"}
+                      disabled={
+                        node.status !== "online" ||
+                        agent.status !== "online" ||
+                        (connectionSourceAgentId
+                          ? connectionSourceAgentId === agent.id
+                            ? false
+                            : !agentCanBeControlled(agent)
+                          : !agentCanOrchestrate(agent))
+                      }
                       onClick={() => void pickConnectionEndpoint(agent.id)}
                     >
                       <ArrowRight size={13} aria-hidden />
@@ -142,6 +172,68 @@ export function NarrowFallback({ topology }: Props) {
           </article>
         );
       })}
+
+      {topology.agents
+        .filter((agent) => getAgentNodeId(agent) === null)
+        .map((agent) => (
+          <article key={agent.id} className="narrow-card">
+            <header>
+              <div>
+                <h3>{agent.name}</h3>
+                <div className="host">{agentSecondaryLabel(agent) ?? "orchestrator"}</div>
+              </div>
+              <div className="narrow-card__meta">
+                <span className={`pill pill-${agent.status === "error" ? "error" : agent.status}`}>
+                  {agent.status}
+                </span>
+              </div>
+            </header>
+
+            <div className="host">
+              {agentRoleBadges(agent).map((badge) => (
+                <span key={badge} className="role-badge role-badge--inline">
+                  {badge}
+                </span>
+              ))}
+            </div>
+
+            <ul className="rules">
+              <li>
+                {agent.id}
+                {" "}
+                <button
+                  type="button"
+                  className="narrow-card__connect"
+                  aria-label={
+                    connectionSourceAgentId
+                      ? connectionSourceAgentId === agent.id
+                        ? `Cancel connection from ${agent.name}`
+                        : `Connect ${connectionSourceAgentName ?? "selected agent"} to ${agent.name}`
+                      : `Start connection from ${agent.name}`
+                  }
+                  aria-pressed={connectionSourceAgentId === agent.id}
+                  disabled={
+                    agent.status !== "online" ||
+                    (connectionSourceAgentId
+                      ? connectionSourceAgentId === agent.id
+                        ? false
+                        : !agentCanBeControlled(agent)
+                      : !agentCanOrchestrate(agent))
+                  }
+                  onClick={() => void pickConnectionEndpoint(agent.id)}
+                >
+                  <ArrowRight size={13} aria-hidden />
+                </button>
+                {agentCanLaunchSessions(agent) ? null : (
+                  <>
+                    {" "}
+                    <span className="host">read-only from amesh</span>
+                  </>
+                )}
+              </li>
+            </ul>
+          </article>
+        ))}
     </div>
   );
 }

@@ -14,12 +14,16 @@ class MockSocket {
 const socket = new MockSocket();
 type TestAgent = {
   id: string;
-  nodeId: string;
+  nodeId: string | null;
   name: string;
-  backend: "acpx";
+  backend: string;
   status: string;
+  orchestrator?: boolean;
+  controlled?: boolean;
+  hostKind?: string;
+  executionName?: string;
   capabilities: {
-    acpxAgent: string;
+    acpxAgent?: string;
     cwd?: string;
     error?: string;
   };
@@ -323,6 +327,7 @@ describe("App shell", () => {
 
   it("loads the registration token into the empty-state install command", async () => {
     topologyNodes = [];
+    topologyAgents = [];
     window.history.pushState({}, "", "/");
     render(<App />);
 
@@ -330,6 +335,32 @@ describe("App shell", () => {
     await waitFor(() =>
       expect(screen.getByText(/REGISTRATION_TOKEN='server-registered-token'/i)).toBeTruthy()
     );
+  });
+
+  it("surfaces orchestrator-only agents in topology even when no nodes exist", async () => {
+    narrowLayout = true;
+    topologyNodes = [];
+    topologyAgents = [
+      {
+        id: "agent-remote",
+        nodeId: null,
+        name: "Claude",
+        backend: "mcp",
+        status: "online",
+        orchestrator: true,
+        controlled: false,
+        hostKind: "claude",
+        executionName: "claude",
+        capabilities: {}
+      }
+    ];
+    window.history.pushState({}, "", "/");
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Claude")).toBeTruthy());
+    expect(screen.queryByText(/the mesh is empty/i)).toBeNull();
+    expect(screen.getByText("Orch")).toBeTruthy();
+    expect(screen.queryByText("Ctrl")).toBeNull();
   });
 
   it("triggers a node update from the admin UI", async () => {
@@ -544,6 +575,76 @@ describe("App shell", () => {
     );
   });
 
+  it("prevents impossible trigger-rule connections in the visible UI", async () => {
+    topologyAgents = [
+      {
+        id: "agent-source",
+        nodeId: null,
+        name: "Claude",
+        backend: "mcp",
+        status: "online",
+        orchestrator: true,
+        controlled: false,
+        hostKind: "claude",
+        capabilities: {}
+      },
+      {
+        id: "agent-bad-target",
+        nodeId: null,
+        name: "Remote URL",
+        backend: "mcp",
+        status: "online",
+        orchestrator: true,
+        controlled: false,
+        hostKind: "custom",
+        capabilities: {}
+      },
+      {
+        id: "agent-target",
+        nodeId: "node-1",
+        name: "Codex",
+        backend: "acpx",
+        status: "online",
+        orchestrator: false,
+        controlled: true,
+        capabilities: {
+          acpxAgent: "codex"
+        }
+      }
+    ];
+    topologyNodes = [
+      {
+        ...topologyNodes[0]!,
+        updateRequired: false,
+        version: "v0.1.1",
+        latestVersion: "v0.1.1"
+      }
+    ];
+    narrowLayout = true;
+    window.history.pushState({}, "", "/");
+    render(<App />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /start connection from claude/i })).toBeTruthy()
+    );
+    fireEvent.click(screen.getByRole("button", { name: /start connection from claude/i }));
+
+    const impossibleTarget = screen.getByRole("button", { name: /connect claude to remote url/i });
+    expect(impossibleTarget.hasAttribute("disabled")).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: /connect claude to codex/i }));
+
+    await waitFor(() =>
+      expect(triggerRuleRequests).toEqual([
+        {
+          sourceAgentId: "agent-source",
+          targetAgentId: "agent-target",
+          mode: "allow"
+        }
+      ])
+    );
+  });
+
   it("lets the sessions rail switch between exposed folders on a node", async () => {
     topologyAgents = [
       {
@@ -574,6 +675,34 @@ describe("App shell", () => {
     await waitFor(() =>
       expect(window.location.search).toContain("folder=%2Fsrv%2Fwork%2Frepo-b")
     );
+  });
+
+  it("disables new-session flows when a node has no controllable agents", async () => {
+    topologyAgents = [
+      {
+        id: "agent-1",
+        nodeId: "node-1",
+        name: "Claude",
+        backend: "mcp",
+        status: "online",
+        orchestrator: true,
+        controlled: false,
+        hostKind: "claude",
+        capabilities: {}
+      }
+    ];
+    topologyNodes = [
+      {
+        ...topologyNodes[0]!,
+        paths: []
+      }
+    ];
+    window.history.pushState({}, "", "/sessions?node=node-1");
+    render(<App />);
+
+    const newButton = (await screen.findByRole("button", { name: /^new$/i })) as HTMLButtonElement;
+    expect(newButton.disabled).toBe(true);
+    expect(newButton.getAttribute("title")).toMatch(/pick a node first|no controllable agents/i);
   });
 
   it("shows the current cwd even when only one folder variant exists", async () => {

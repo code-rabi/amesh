@@ -3,6 +3,13 @@ import { useNavigate } from "@tanstack/react-router";
 import { ArrowRight } from "lucide-react";
 
 import type { AgentRecord, AgentStatus, NodeRecord, NodeStatus } from "@amesh/protocol";
+import {
+  agentCanBeControlled,
+  agentCanLaunchSessions,
+  agentCanOrchestrate,
+  agentRoleBadges,
+  getAgentNodeId
+} from "../lib/agentRoles.js";
 import { relativeTime } from "../lib/time.js";
 import { NodeSettingsButton } from "./NodeSettingsButton.js";
 
@@ -71,19 +78,35 @@ export function NodeCard({ data }: NodeCardProps) {
       ) : (
         <ul className="node-card__agents">
           {agents.map((agent) => {
-            const chatDisabled = isOffline || agent.status !== "online";
+            const chatDisabled = isOffline || agent.status !== "online" || !agentCanLaunchSessions(agent);
             const connectionSelected = connectionSourceAgentId === agent.id;
-            const connectionDisabled = isOffline || agent.status !== "online";
+            const canPickAsSource = agentCanOrchestrate(agent) && agent.status === "online" && !isOffline;
+            const canPickAsTarget = agentCanBeControlled(agent) && agent.status === "online" && !isOffline;
+            const connectionDisabled = connectionSourceAgentId
+              ? connectionSelected
+                ? false
+                : !canPickAsTarget
+              : !canPickAsSource;
             const connectionLabel = connectionSourceAgentId
               ? connectionSelected
                 ? `Cancel connection from ${agent.name}`
                 : `Connect ${connectionSourceAgentName ?? "selected agent"} to ${agent.name}`
               : `Start connection from ${agent.name}`;
+            const roleBadges = agentRoleBadges(agent);
             return (
               <li key={agent.id} className="node-card__agent">
                 <div>
                   <div className="node-card__agent-name">{agent.name}</div>
                   <div className="node-card__agent-id">{agent.id}</div>
+                  {roleBadges.length > 0 ? (
+                    <div className="node-card__role-row">
+                      {roleBadges.map((badge) => (
+                        <span key={badge} className="role-badge">
+                          {badge}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
                   {typeof agent.capabilities.cwd === "string" ? (
                     <div className="node-card__agent-cwd">{agent.capabilities.cwd}</div>
                   ) : null}
@@ -118,7 +141,7 @@ export function NodeCard({ data }: NodeCardProps) {
                       void navigate({
                         to: "/sessions",
                         search: {
-                          node: agent.nodeId,
+                          node: getAgentNodeId(agent) ?? undefined,
                           folder: undefined,
                           agent: agent.id,
                           session: undefined,
@@ -174,13 +197,13 @@ export function NodeCard({ data }: NodeCardProps) {
                   type="target"
                   position={Position.Left}
                   id={agent.id}
-                  isConnectable={!isOffline}
+                  isConnectable={!isOffline && agentCanBeControlled(agent)}
                 />
                 <Handle
                   type="source"
                   position={Position.Right}
                   id={agent.id}
-                  isConnectable={!isOffline}
+                  isConnectable={!isOffline && agentCanOrchestrate(agent)}
                 />
               </li>
             );

@@ -30,7 +30,7 @@ type Props = {
 export function TopologyRoute({ topology }: Props) {
   const isNarrow = useIsNarrow();
 
-  if (topology.nodes.length === 0) {
+  if (topology.nodes.length === 0 && topology.agents.length === 0) {
     return (
       <section className="topology-route" aria-label="Topology">
         <EmptyState />

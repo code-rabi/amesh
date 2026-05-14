@@ -1,7 +1,11 @@
 import type {
   AgentRecord,
+  AgentStatus,
   BrowserRealtimeEvent,
   Capability,
+  McpAgentRegistrationRequest,
+  McpAgentRegistrationResponse,
+  McpEnsureNodeRequest,
   NodeRecord,
   SessionEventRecord,
   SessionRecord,
@@ -9,10 +13,17 @@ import type {
   TriggerRule,
   TriggerMode
 } from "@amesh/protocol";
-import { agentSchema, nodeSchema, sessionEventSchema, sessionSchema, triggerRuleSchema } from "@amesh/protocol";
+import {
+  agentSchema,
+  nodeSchema,
+  sessionEventSchema,
+  sessionSchema,
+  triggerRuleSchema
+} from "@amesh/protocol";
 import { and, asc, eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { nanoid } from "nanoid";
+import { createHash } from "node:crypto";
 
 import {
   agentsTable,
@@ -28,24 +39,112 @@ function parseJson<T>(value: string): T {
   return JSON.parse(value) as T;
 }
 
+function normalizeHostKind(value: string | null | undefined): AgentRecord["hostKind"] {
+  const normalized = (value ?? "").trim().toLowerCase();
+  if (normalized === "codex" || normalized === "claude" || normalized === "gemini") {
+    return normalized;
+  }
+  return "custom";
+}
+
+function canonicalAgentId(input: {
+  nodeId: string | null;
+  hostKind: AgentRecord["hostKind"];
+  executionName: string | null;
+  fingerprint: string | null;
+}) {
+  const identityTail =
+    input.nodeId && input.executionName ? input.executionName : input.fingerprint ?? input.executionName ?? "";
+  const raw = [
+    input.nodeId ?? "global",
+    input.hostKind,
+    identityTail
+  ].join("|");
+  return `agent_${createHash("sha1").update(raw).digest("hex").slice(0, 16)}`;
+}
+
+function backendForRoles(orchestrator: boolean, controlled: boolean): AgentRecord["backend"] {
+  if (orchestrator && controlled) {
+    return "hybrid";
+  }
+  if (orchestrator) {
+    return "mcp";
+  }
+  return "acpx";
+}
+
 export class Repository {
   constructor(private readonly db: Database) {}
 
-  registerNode(input: { id?: string; name: string; host: string; labels: string[] }) {
-    const node: NodeRecord = {
-      id: input.id ?? nanoid(10),
-      name: input.name,
-      host: input.host,
-      labels: input.labels,
-      paths: [],
-      status: "online",
-      registeredAt: new Date().toISOString(),
-      lastSeenAt: new Date().toISOString(),
-      version: null,
-      latestVersion: null,
-      updateRequired: false
-    };
+  private parseNodeRow(row: typeof nodesTable.$inferSelect): NodeRecord {
+    return nodeSchema.parse({
+      id: row.id,
+      name: row.name,
+      status: row.status,
+      host: row.host,
+      labels: parseJson<string[]>(row.labels),
+      paths: parseJson<string[]>(row.paths ?? "[]"),
+      registeredAt: row.registeredAt,
+      lastSeenAt: row.lastSeenAt ?? null
+    });
+  }
 
+  private parseAgentRow(row: typeof agentsTable.$inferSelect): AgentRecord {
+    return agentSchema.parse({
+      id: row.id,
+      nodeId: row.nodeId ?? null,
+      name: row.name,
+      backend: row.backend,
+      hostKind: normalizeHostKind(row.hostKind),
+      executionName: row.executionName ?? null,
+      fingerprint: row.fingerprint ?? null,
+      orchestrator: Boolean(row.orchestrator),
+      controlled: Boolean(row.controlled),
+      status: row.status,
+      capabilities: parseJson<Record<string, unknown>>(row.capabilities),
+      endpoints: parseJson<Array<{ transport: string; metadata?: Record<string, unknown> }>>(
+        row.endpoints ?? "[]"
+      )
+    });
+  }
+
+  private upsertAgentRecord(agent: AgentRecord) {
+    this.db
+      .insert(agentsTable)
+      .values({
+        id: agent.id,
+        nodeId: agent.nodeId,
+        name: agent.name,
+        backend: agent.backend,
+        hostKind: agent.hostKind,
+        executionName: agent.executionName,
+        fingerprint: agent.fingerprint,
+        orchestrator: agent.orchestrator,
+        controlled: agent.controlled,
+        status: agent.status,
+        capabilities: JSON.stringify(agent.capabilities),
+        endpoints: JSON.stringify(agent.endpoints)
+      })
+      .onConflictDoUpdate({
+        target: agentsTable.id,
+        set: {
+          nodeId: agent.nodeId,
+          name: agent.name,
+          backend: agent.backend,
+          hostKind: agent.hostKind,
+          executionName: agent.executionName,
+          fingerprint: agent.fingerprint,
+          orchestrator: agent.orchestrator,
+          controlled: agent.controlled,
+          status: agent.status,
+          capabilities: JSON.stringify(agent.capabilities),
+          endpoints: JSON.stringify(agent.endpoints)
+        }
+      })
+      .run();
+  }
+
+  private upsertNodeRow(node: NodeRecord, reconnectToken: string) {
     this.db
       .insert(nodesTable)
       .values({
@@ -54,7 +153,7 @@ export class Repository {
         host: node.host,
         labels: JSON.stringify(node.labels),
         paths: JSON.stringify(node.paths),
-        reconnectToken: nanoid(24),
+        reconnectToken,
         status: node.status,
         registeredAt: node.registeredAt,
         lastSeenAt: node.lastSeenAt
@@ -65,12 +164,32 @@ export class Repository {
           name: node.name,
           host: node.host,
           labels: JSON.stringify(node.labels),
-          reconnectToken: nanoid(24),
-          status: "online",
+          paths: JSON.stringify(node.paths),
+          status: node.status,
+          registeredAt: node.registeredAt,
           lastSeenAt: node.lastSeenAt
         }
       })
       .run();
+  }
+
+  registerNode(input: { id?: string; name: string; host: string; labels: string[] }) {
+    const existing = input.id ? this.findNode(input.id) : null;
+    const node: NodeRecord = {
+      id: input.id ?? nanoid(10),
+      name: input.name,
+      host: input.host,
+      labels: input.labels,
+      paths: [],
+      status: "online",
+      registeredAt: existing?.registeredAt ?? new Date().toISOString(),
+      lastSeenAt: new Date().toISOString(),
+      version: null,
+      latestVersion: null,
+      updateRequired: false
+    };
+
+    this.upsertNodeRow(node, this.getReconnectToken(node.id) ?? nanoid(24));
 
     return node;
   }
@@ -96,16 +215,7 @@ export class Repository {
       return null;
     }
 
-    return nodeSchema.parse({
-      id: row.id,
-      name: row.name,
-      status: row.status,
-      host: row.host,
-      labels: parseJson<string[]>(row.labels),
-      paths: parseJson<string[]>(row.paths ?? "[]"),
-      registeredAt: row.registeredAt,
-      lastSeenAt: row.lastSeenAt ?? null
-    });
+    return this.parseNodeRow(row);
   }
 
   resumeNode(nodeId: string, reconnectToken: string, observedAt: string) {
@@ -128,16 +238,7 @@ export class Repository {
       .where(eq(nodesTable.id, nodeId))
       .run();
 
-    return nodeSchema.parse({
-      id: row.id,
-      name: row.name,
-      status: "online",
-      host: row.host,
-      labels: parseJson<string[]>(row.labels),
-      paths: parseJson<string[]>(row.paths ?? "[]"),
-      registeredAt: row.registeredAt,
-      lastSeenAt: observedAt
-    });
+    return this.parseNodeRow({ ...row, status: "online", lastSeenAt: observedAt });
   }
 
   markNodeOffline(nodeId: string) {
@@ -146,11 +247,12 @@ export class Repository {
       .set({ status: "offline" })
       .where(eq(nodesTable.id, nodeId))
       .run();
-    this.db
-      .update(agentsTable)
-      .set({ status: "offline" })
-      .where(eq(agentsTable.nodeId, nodeId))
-      .run();
+    for (const agent of this.listTopology().agents.filter((entry) => entry.nodeId === nodeId)) {
+      this.upsertAgentRecord({
+        ...agent,
+        status: agent.orchestrator ? agent.status : "offline"
+      });
+    }
   }
 
   heartbeat(nodeId: string, observedAt: string) {
@@ -174,80 +276,110 @@ export class Repository {
       .run();
   }
 
+  ensureNode(input: McpEnsureNodeRequest): { node: NodeRecord; reconnectToken: string } {
+    const nodeId = input.id ?? nanoid(10);
+    const existing = this.findNode(nodeId);
+    const reconnectToken = this.getReconnectToken(nodeId) ?? nanoid(24);
+    const node: NodeRecord = {
+      id: nodeId,
+      name: input.name,
+      host: input.host,
+      labels: input.labels,
+      paths: existing?.paths ?? [],
+      status: existing?.status ?? "pending",
+      registeredAt: existing?.registeredAt ?? new Date().toISOString(),
+      lastSeenAt: existing?.lastSeenAt ?? null,
+      version: null,
+      latestVersion: null,
+      updateRequired: false
+    };
+
+    this.upsertNodeRow(node, reconnectToken);
+    return { node, reconnectToken };
+  }
+
   syncCapabilities(nodeId: string, capabilities: Capability[]) {
-    const existing = this.db
-      .select()
-      .from(agentsTable)
-      .where(eq(agentsTable.nodeId, nodeId))
-      .all();
-    const incomingIds = new Set(capabilities.map((capability) => capability.id));
+    const existing = this.listTopology().agents.filter((agent) => agent.nodeId === nodeId);
+    const incomingControlledIds = new Set(capabilities.map((capability) => capability.id));
 
     for (const capability of capabilities) {
-      this.db
-        .insert(agentsTable)
-        .values({
-          id: capability.id,
-          nodeId,
-          name: capability.name,
-          backend: "acpx",
-          status: capability.status,
-          capabilities: JSON.stringify({
+      const hostKind = normalizeHostKind(capability.acpxAgent);
+      const executionName = capability.acpxAgent.trim() || capability.name.trim() || null;
+      const canonicalId = canonicalAgentId({
+        nodeId,
+        hostKind,
+        executionName,
+        fingerprint: null
+      });
+      const previous = this.findAgent(canonicalId) ??
+        existing.find(
+          (agent) =>
+            agent.hostKind === hostKind &&
+            agent.executionName === executionName
+        ) ??
+        this.findAgent(capability.id);
+      const agentId = previous?.id ?? capability.id;
+      const endpoints = [
+        ...(previous?.endpoints.filter((endpoint) => endpoint.transport !== "acp") ?? []),
+        {
+          transport: "acp" as const,
+          metadata: {
+            capabilityId: capability.id,
             acpxAgent: capability.acpxAgent,
-            error: capability.error,
+            command: capability.command,
+            args: capability.args,
             cwd: capability.cwd,
-            labels: capability.labels
-          })
-        })
-        .onConflictDoUpdate({
-          target: agentsTable.id,
-          set: {
-            name: capability.name,
-            status: capability.status,
-            capabilities: JSON.stringify({
-              acpxAgent: capability.acpxAgent,
-              error: capability.error,
-              cwd: capability.cwd,
-              labels: capability.labels
-            })
+            labels: capability.labels,
+            error: capability.error
           }
-        })
-        .run();
+        }
+      ];
+      const orchestrator = previous?.orchestrator ?? false;
+      const agent: AgentRecord = {
+        id: agentId,
+        nodeId,
+        name: capability.name,
+        backend: backendForRoles(orchestrator, true),
+        hostKind,
+        executionName,
+        fingerprint: previous?.fingerprint ?? null,
+        orchestrator,
+        controlled: true,
+        status: capability.status,
+        capabilities: {
+          acpxAgent: capability.acpxAgent,
+          controlledAgentId: capability.id,
+          error: capability.error,
+          cwd: capability.cwd,
+          labels: capability.labels
+        },
+        endpoints
+      };
+      this.upsertAgentRecord(agent);
     }
 
-    for (const row of existing) {
-      if (!incomingIds.has(row.id)) {
-        this.db
-          .update(agentsTable)
-          .set({ status: "offline" })
-          .where(eq(agentsTable.id, row.id))
-          .run();
+    for (const agent of existing) {
+      const controlledAgentId =
+        typeof agent.capabilities.controlledAgentId === "string"
+          ? agent.capabilities.controlledAgentId
+          : null;
+      if (!controlledAgentId || incomingControlledIds.has(controlledAgentId)) {
+        continue;
       }
+      const endpoints = agent.endpoints.filter((endpoint) => endpoint.transport !== "acp");
+      this.upsertAgentRecord({
+        ...agent,
+        backend: backendForRoles(agent.orchestrator, false),
+        controlled: false,
+        status: agent.orchestrator ? agent.status : "offline",
+        endpoints
+      });
     }
   }
 
   listTopology(): TopologySnapshot {
-    const nodes = this.db.select().from(nodesTable).all().map((row) =>
-      nodeSchema.parse({
-        id: row.id,
-        name: row.name,
-        status: row.status,
-        host: row.host,
-        labels: parseJson<string[]>(row.labels),
-        paths: parseJson<string[]>(row.paths ?? "[]"),
-        registeredAt: row.registeredAt,
-        lastSeenAt: row.lastSeenAt ?? null
-      })
-    );
-    const agents = this.db.select().from(agentsTable).all().map((row) =>
-      agentSchema.parse({
-        id: row.id,
-        nodeId: row.nodeId,
-        name: row.name,
-        backend: row.backend,
-        status: row.status,
-        capabilities: parseJson<Record<string, unknown>>(row.capabilities)
-      })
-    );
+    const nodes = this.db.select().from(nodesTable).all().map((row) => this.parseNodeRow(row));
+    const agents = this.db.select().from(agentsTable).all().map((row) => this.parseAgentRow(row));
     const triggerRules = this.db.select().from(triggerRulesTable).all().map((row) =>
       triggerRuleSchema.parse({
         id: row.id,
@@ -450,14 +582,89 @@ export class Repository {
       return null;
     }
 
-    return agentSchema.parse({
-      id: row.id,
-      nodeId: row.nodeId,
-      name: row.name,
-      backend: row.backend,
-      status: row.status,
-      capabilities: parseJson<Record<string, unknown>>(row.capabilities)
+    return this.parseAgentRow(row);
+  }
+
+  findAgentByControlledAgentId(nodeId: string, controlledAgentId: string) {
+    return (
+      this.listTopology().agents.find(
+        (agent) =>
+          agent.nodeId === nodeId &&
+          typeof agent.capabilities.controlledAgentId === "string" &&
+          agent.capabilities.controlledAgentId === controlledAgentId
+      ) ?? null
+    );
+  }
+
+  upsertMcpAgent(
+    input: McpAgentRegistrationRequest
+  ): McpAgentRegistrationResponse {
+    const ensured = input.node ? this.ensureNode(input.node) : null;
+    const nodeId = ensured?.node.id ?? null;
+    const hostKind = input.hostKind;
+    const executionName = input.executionName?.trim() || null;
+    const fingerprint = input.fingerprint?.trim() || null;
+    const controlled = input.controlled && nodeId !== null;
+    const canonicalId = canonicalAgentId({
+      nodeId,
+      hostKind,
+      executionName,
+      fingerprint
     });
+    const previous =
+      this.findAgent(canonicalId) ??
+      this.listTopology().agents.find(
+        (agent) =>
+          agent.nodeId === nodeId &&
+          agent.hostKind === hostKind &&
+          agent.executionName === executionName
+      ) ??
+      null;
+    const agentId = previous?.id ?? canonicalId;
+    const endpointTransport: "mcp-url" | "mcp-npx" =
+      input.transport === "url" ? "mcp-url" : "mcp-npx";
+    const endpoints = [
+      ...(previous?.endpoints.filter((endpoint) => endpoint.transport !== endpointTransport) ?? []),
+      {
+        transport: endpointTransport,
+        metadata: input.metadata
+      }
+    ];
+    const agent: AgentRecord = {
+      id: agentId,
+      nodeId,
+      name: input.name,
+      backend: backendForRoles(true, Boolean(previous?.controlled || controlled)),
+      hostKind,
+      executionName,
+      fingerprint,
+      orchestrator: true,
+      controlled: Boolean(previous?.controlled || controlled),
+      status: "online",
+      capabilities: {
+        ...(previous?.capabilities ?? {}),
+        mcpTransport: input.transport
+      },
+      endpoints
+    };
+
+    this.upsertAgentRecord(agent);
+    return {
+      agent,
+      node: ensured?.node ?? null,
+      reconnectToken: ensured?.reconnectToken ?? null
+    };
+  }
+
+  mcpStatus(agentId: string) {
+    const agent = this.findAgent(agentId);
+    if (!agent) {
+      return null;
+    }
+    return {
+      agent,
+      node: agent.nodeId ? this.findNode(agent.nodeId) : null
+    };
   }
 
   sessionUpdatedEvent(sessionId: string): BrowserRealtimeEvent {
