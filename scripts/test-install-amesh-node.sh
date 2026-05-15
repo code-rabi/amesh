@@ -326,3 +326,176 @@ if grep -F 'stop amesh-node' "$self_systemctl_log" >/dev/null 2>&1; then
   cat "$self_systemctl_log" >&2
   exit 1
 fi
+
+reinstall_stub_dir="$tmp_dir/reinstall-bin"
+mkdir -p "$reinstall_stub_dir"
+
+cat <<'EOF' >"$reinstall_stub_dir/curl"
+#!/usr/bin/env bash
+set -euo pipefail
+archive="${@: -1}"
+printf 'stub archive' >"$archive"
+EOF
+chmod +x "$reinstall_stub_dir/curl"
+
+cat <<'EOF' >"$reinstall_stub_dir/npm"
+#!/usr/bin/env bash
+set -euo pipefail
+exit 0
+EOF
+chmod +x "$reinstall_stub_dir/npm"
+
+cat <<'EOF' >"$reinstall_stub_dir/systemctl"
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"${SYSTEMCTL_LOG:?}"
+verb=
+for arg in "$@"; do
+  case "$arg" in
+    --user|--now|--quiet|--no-pager|--full)
+      continue
+      ;;
+    *)
+      verb="$arg"
+      break
+      ;;
+  esac
+done
+case "$verb" in
+  stop|disable|daemon-reload|enable|is-active)
+    if [[ "$verb" == "is-active" ]]; then
+      exit 0
+    fi
+    exit 0
+    ;;
+  *)
+    exit 99
+    ;;
+esac
+EOF
+chmod +x "$reinstall_stub_dir/systemctl"
+
+cat <<'EOF' >"$reinstall_stub_dir/uname"
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  -m)
+    printf 'x86_64\n'
+    ;;
+  *)
+    printf 'Linux\n'
+    ;;
+esac
+EOF
+chmod +x "$reinstall_stub_dir/uname"
+
+cat <<'EOF' >"$reinstall_stub_dir/mktemp"
+#!/usr/bin/env bash
+set -euo pipefail
+dir="${TMPDIR:-/tmp}/amesh-test-reinstall"
+mkdir -p "$dir"
+printf '%s\n' "$dir"
+EOF
+chmod +x "$reinstall_stub_dir/mktemp"
+
+cat <<'EOF' >"$reinstall_stub_dir/tar"
+#!/usr/bin/env bash
+set -euo pipefail
+target_dir=
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -C)
+      target_dir="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+mkdir -p "$target_dir"
+cat <<'BIN' >"$target_dir/amesh-node"
+#!/usr/bin/env bash
+set -euo pipefail
+exit 0
+BIN
+chmod +x "$target_dir/amesh-node"
+cat <<'BIN' >"$target_dir/amesh"
+#!/usr/bin/env bash
+set -euo pipefail
+exit 0
+BIN
+chmod +x "$target_dir/amesh"
+EOF
+chmod +x "$reinstall_stub_dir/tar"
+
+cat <<'EOF' >"$reinstall_stub_dir/install"
+#!/usr/bin/env bash
+set -euo pipefail
+src="${@: -2:1}"
+dest="${@: -1}"
+cp "$src" "$dest"
+chmod 0755 "$dest"
+EOF
+chmod +x "$reinstall_stub_dir/install"
+
+cat <<'EOF' >"$reinstall_stub_dir/node"
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  -v)
+    printf 'v24.13.1\n'
+    ;;
+  -p)
+    printf '24\n'
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+EOF
+chmod +x "$reinstall_stub_dir/node"
+
+reinstall_env_dir="$tmp_dir/reinstall-env"
+mkdir -p "$reinstall_env_dir/home/keep-me"
+mkdir -p "$reinstall_env_dir/bin"
+printf '{"old":true}\n' >"$reinstall_env_dir/agents.json"
+printf '{"nodeId":"node-a","reconnectToken":"token","serverUrl":"ws://saved.invalid/ws?role=node","configPath":"%s"}\n' "$reinstall_env_dir/agents.json" >"$reinstall_env_dir/node-state.json"
+printf '[Unit]\nDescription=old service\n' >"$reinstall_env_dir/amesh-node.service"
+printf 'old binary\n' >"$reinstall_env_dir/bin/amesh-node"
+printf 'old cli\n' >"$reinstall_env_dir/bin/amesh"
+printf 'stale managed home\n' >"$reinstall_env_dir/home/keep-me/stale.txt"
+
+reinstall_systemctl_log="$tmp_dir/reinstall-systemctl.log"
+reinstall_log="$tmp_dir/reinstall.log"
+if ! PATH="$reinstall_stub_dir:$PATH" \
+  SYSTEMCTL_LOG="$reinstall_systemctl_log" \
+  AMESH_NODE_REINSTALL='1' \
+  AMESH_VERSION_TAG='test-tag' \
+  INSTALL_DIR="$reinstall_env_dir/bin" \
+  AMESH_HOME="$reinstall_env_dir/home" \
+  ACPX_PREFIX="$reinstall_env_dir/acpx" \
+  ACPX_CONFIG_PATH="$reinstall_env_dir/acpx-config.json" \
+  CONFIG_PATH="$reinstall_env_dir/agents.json" \
+  STATE_PATH="$reinstall_env_dir/node-state.json" \
+  SERVICE_PATH="$reinstall_env_dir/amesh-node.service" \
+  NODE_ID='reinstall-node' \
+  SERVER_URL='wss://example.invalid/ws?role=node' \
+  REGISTRATION_TOKEN='token' \
+  bash <"$ROOT_DIR/install-amesh-node.sh" >"$reinstall_log" 2>&1; then
+  printf 'expected reinstall installer execution to succeed\n' >&2
+  cat "$reinstall_log" >&2
+  exit 1
+fi
+
+assert_contains 'stop amesh-node' "$reinstall_systemctl_log"
+assert_contains 'disable amesh-node' "$reinstall_systemctl_log"
+assert_contains 'enable --now amesh-node' "$reinstall_systemctl_log"
+if [[ -f "$reinstall_env_dir/home/keep-me/stale.txt" ]]; then
+  printf 'reinstall should remove previous managed amesh home\n' >&2
+  exit 1
+fi
+if grep -F '"old":true' "$reinstall_env_dir/agents.json" >/dev/null 2>&1; then
+  printf 'reinstall should replace stale agent config\n' >&2
+  exit 1
+fi

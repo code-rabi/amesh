@@ -47,6 +47,7 @@ type nodeUpdateOptions struct {
 	ConfigPath string
 	StatePath  string
 	SelfUpdate bool
+	Reinstall bool
 }
 
 type updateRunner func(ctx context.Context, stdout, stderr io.Writer, options nodeUpdateOptions) error
@@ -96,7 +97,7 @@ func Run(ctx context.Context, args []string) error {
 
 func run(ctx context.Context, args []string, update updateRunner, detect detectRunner) error {
 	if len(args) == 0 {
-		return errors.New("expected subcommand: register, run, detect, update, or acp")
+		return errors.New("expected subcommand: register, run, detect, update, reinstall, logs, or acp")
 	}
 
 	switch args[0] {
@@ -108,6 +109,8 @@ func run(ctx context.Context, args []string, update updateRunner, detect detectR
 		return runDetectCommand(ctx, args[1:], detect)
 	case "update":
 		return update(ctx, os.Stdout, os.Stderr, nodeUpdateOptions{})
+	case "reinstall":
+		return update(ctx, os.Stdout, os.Stderr, nodeUpdateOptions{Reinstall: true})
 	case "acp":
 		return runACPBridge(ctx, args[1:], os.Stdin, os.Stdout)
 	case "logs":
@@ -168,6 +171,15 @@ func runACPBridge(ctx context.Context, args []string, stdin io.Reader, stdout io
 }
 
 func runUpdate(ctx context.Context, stdout, stderr io.Writer, options nodeUpdateOptions) error {
+	return runInstaller(ctx, stdout, stderr, options, options.Reinstall)
+}
+
+func runReinstall(ctx context.Context, stdout, stderr io.Writer, options nodeUpdateOptions) error {
+	options.Reinstall = true
+	return runInstaller(ctx, stdout, stderr, options, true)
+}
+
+func runInstaller(ctx context.Context, stdout, stderr io.Writer, options nodeUpdateOptions, reinstall bool) error {
 	if _, err := exec.LookPath("bash"); err != nil {
 		return errors.New("required CLI missing: bash")
 	}
@@ -203,14 +215,24 @@ func runUpdate(ctx context.Context, stdout, stderr io.Writer, options nodeUpdate
 	if options.SelfUpdate {
 		cmd.Env = append(cmd.Env, "AMESH_NODE_SELF_UPDATE=1")
 	}
+	if reinstall {
+		cmd.Env = append(cmd.Env, "AMESH_NODE_REINSTALL=1")
+	}
 	if os.Getenv("INSTALL_DIR") == "" {
 		if installDir, ok := currentInstallDir(); ok {
 			cmd.Env = append(cmd.Env, "INSTALL_DIR="+installDir)
 		}
 	}
 
-	fmt.Fprintf(stdout, "updating amesh-node from %s\n", installerURL)
+	action := "updating"
+	if reinstall {
+		action = "reinstalling"
+	}
+	fmt.Fprintf(stdout, "%s amesh-node from %s\n", action, installerURL)
 	if err := cmd.Run(); err != nil {
+		if reinstall {
+			return fmt.Errorf("reinstall failed: %w", err)
+		}
 		return fmt.Errorf("update failed: %w", err)
 	}
 	return nil

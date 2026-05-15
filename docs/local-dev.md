@@ -134,3 +134,16 @@ amesh-node update
 Authenticated admins can also trigger the same node-side updater from the dashboard. The control plane sends a `node.update` command over the existing node websocket, the daemon runs `amesh-node update`, and a managed systemd service should restart back into the new binary after the process exits.
 - The dashboard only shows the update action when the node reports an installed release tag and that tag differs from the control plane's latest known GitHub release tag.
 - Daemon-triggered self-updates reuse the node's active `server`, `config`, and `state` paths and deliberately avoid `systemctl stop` during the update run. The daemon exits after the installer finishes and systemd restarts it into the new binary.
+
+## Remote reinstall
+
+```bash
+amesh-node reinstall
+```
+
+The shared CLI also exposes the same command as `amesh reinstall`.
+
+`reinstall` is the destructive recovery path for a stale or suspect node install. It stops and disables the managed user service, removes the node service file, durable node state, detected agent config, installed `amesh-node` and `amesh` binaries, and the managed `~/.local/share/amesh` payload, then runs the installer again from scratch.
+- Use `reinstall` when you suspect stale node state, stale detected agent inventory, or broken managed ACPX/node wiring.
+- `reinstall` preserves the user ACPX config at `~/.acpx/config.json`; it only wipes amesh-managed node artifacts.
+- On success, the installer re-detects agents, re-registers the node, rewrites the service, and starts the managed daemon again.
