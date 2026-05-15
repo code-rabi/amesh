@@ -41,7 +41,15 @@ type sleeper func(ctx context.Context, delay time.Duration) error
 
 type capabilityProber func(ctx context.Context, agent nodeconfig.AgentConfig) error
 
-type updateRunner func(ctx context.Context, stdout, stderr io.Writer) error
+type nodeUpdateOptions struct {
+	ServerURL  string
+	NodeID     string
+	ConfigPath string
+	StatePath  string
+	SelfUpdate bool
+}
+
+type updateRunner func(ctx context.Context, stdout, stderr io.Writer, options nodeUpdateOptions) error
 type detectRunner func(ctx context.Context, configPath string) error
 
 type retryableDaemonError struct {
@@ -99,7 +107,7 @@ func run(ctx context.Context, args []string, update updateRunner, detect detectR
 	case "detect":
 		return runDetectCommand(ctx, args[1:], detect)
 	case "update":
-		return update(ctx, os.Stdout, os.Stderr)
+		return update(ctx, os.Stdout, os.Stderr, nodeUpdateOptions{})
 	case "acp":
 		return runACPBridge(ctx, args[1:], os.Stdin, os.Stdout)
 	case "logs":
@@ -159,7 +167,7 @@ func runACPBridge(ctx context.Context, args []string, stdin io.Reader, stdout io
 	return bridge.Serve(ctx, stdin, stdout)
 }
 
-func runUpdate(ctx context.Context, stdout, stderr io.Writer) error {
+func runUpdate(ctx context.Context, stdout, stderr io.Writer, options nodeUpdateOptions) error {
 	if _, err := exec.LookPath("bash"); err != nil {
 		return errors.New("required CLI missing: bash")
 	}
@@ -180,6 +188,21 @@ func runUpdate(ctx context.Context, stdout, stderr io.Writer) error {
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.Env = append(os.Environ(), "AMESH_INSTALL_URL="+installerURL)
+	if strings.TrimSpace(options.ServerURL) != "" && os.Getenv("SERVER_URL") == "" {
+		cmd.Env = append(cmd.Env, "SERVER_URL="+options.ServerURL)
+	}
+	if strings.TrimSpace(options.NodeID) != "" && os.Getenv("NODE_ID") == "" {
+		cmd.Env = append(cmd.Env, "NODE_ID="+options.NodeID)
+	}
+	if strings.TrimSpace(options.ConfigPath) != "" && os.Getenv("CONFIG_PATH") == "" {
+		cmd.Env = append(cmd.Env, "CONFIG_PATH="+options.ConfigPath)
+	}
+	if strings.TrimSpace(options.StatePath) != "" && os.Getenv("STATE_PATH") == "" {
+		cmd.Env = append(cmd.Env, "STATE_PATH="+options.StatePath)
+	}
+	if options.SelfUpdate {
+		cmd.Env = append(cmd.Env, "AMESH_NODE_SELF_UPDATE=1")
+	}
 	if os.Getenv("INSTALL_DIR") == "" {
 		if installDir, ok := currentInstallDir(); ok {
 			cmd.Env = append(cmd.Env, "INSTALL_DIR="+installDir)
@@ -680,6 +703,7 @@ func runDaemon(ctx context.Context, args []string, update updateRunner, detect d
 		*nodeID,
 		*reconnectToken,
 		*configPath,
+		*statePath,
 		runner,
 		sessions,
 		func(serverURL string) daemonClient {
@@ -954,6 +978,7 @@ func runDaemonLoop(
 	nodeID string,
 	reconnectToken string,
 	configPath string,
+	statePath string,
 	runner acpx.Runner,
 	sessions *sessionStore,
 	clientFactory daemonClientFactory,
@@ -972,6 +997,7 @@ func runDaemonLoop(
 			nodeID,
 			reconnectToken,
 			configPath,
+			statePath,
 			runner,
 			sessions,
 			clientFactory,
@@ -1007,6 +1033,7 @@ func runDaemonSession(
 	nodeID string,
 	reconnectToken string,
 	configPath string,
+	statePath string,
 	runner acpx.Runner,
 	sessions *sessionStore,
 	clientFactory daemonClientFactory,
@@ -1160,8 +1187,18 @@ func runDaemonSession(
 			}
 		case "node.update":
 			logf("update command node=%s", nodeID)
-			sendNodeLog(sessionCtx, client, nodeID, "warn", "node update requested", nil)
-			if err := update(sessionCtx, os.Stdout, os.Stderr); err != nil {
+			sendNodeLog(sessionCtx, client, nodeID, "warn", "node update requested", map[string]any{
+				"serverUrl": serverURL,
+				"config":    configPath,
+				"state":     statePath,
+			})
+			if err := update(sessionCtx, os.Stdout, os.Stderr, nodeUpdateOptions{
+				ServerURL:  serverURL,
+				NodeID:     nodeID,
+				ConfigPath: configPath,
+				StatePath:  statePath,
+				SelfUpdate: true,
+			}); err != nil {
 				sendNodeLog(sessionCtx, client, nodeID, "error", "node update failed", map[string]any{
 					"error": err.Error(),
 				})

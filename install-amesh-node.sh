@@ -18,6 +18,7 @@ SERVICE_PATH="${SERVICE_PATH:-$HOME/.config/systemd/user/${SERVICE_NAME}.service
 SERVER_URL="${SERVER_URL:-}"
 REGISTRATION_TOKEN="${REGISTRATION_TOKEN:-}"
 NODE_ID="${NODE_ID:-$(hostname)-amesh}"
+SELF_UPDATE="${AMESH_NODE_SELF_UPDATE:-0}"
 
 log() {
   printf '%s\n' "$*" >&2
@@ -194,7 +195,7 @@ main() {
   need_cmd install
   need_cmd mkdir
 
-  if [[ -z "$SERVER_URL" ]]; then
+  if [[ -z "$SERVER_URL" && ! -f "$STATE_PATH" ]]; then
     fail "SERVER_URL is required"
   fi
 
@@ -246,7 +247,7 @@ main() {
     install -m 0755 "${extract_dir}/${cli_binary_name}" "${cli_binary_path}"
   fi
 
-  if command -v systemctl >/dev/null 2>&1; then
+  if command -v systemctl >/dev/null 2>&1 && [[ "$SELF_UPDATE" != "1" ]]; then
     systemctl --user stop "$SERVICE_NAME" >/dev/null 2>&1 || true
   fi
 
@@ -309,16 +310,21 @@ EOF
 
   if command -v systemctl >/dev/null 2>&1; then
     systemctl --user daemon-reload
-    systemctl --user enable --now "$SERVICE_NAME"
-    sleep 2
-    if ! systemctl --user --quiet is-active "$SERVICE_NAME"; then
-      log "service failed to stay active: $SERVICE_NAME"
-      systemctl --user --no-pager --full status "$SERVICE_NAME" >&2 || true
-      journalctl --user -u "$SERVICE_NAME" -n 80 --no-pager >&2 || true
-      fail "amesh-node user service did not reach active state"
+    if [[ "$SELF_UPDATE" == "1" ]]; then
+      systemctl --user enable "$SERVICE_NAME"
+      log "prepared user service restart after self-update: $SERVICE_NAME"
+    else
+      systemctl --user enable --now "$SERVICE_NAME"
+      sleep 2
+      if ! systemctl --user --quiet is-active "$SERVICE_NAME"; then
+        log "service failed to stay active: $SERVICE_NAME"
+        systemctl --user --no-pager --full status "$SERVICE_NAME" >&2 || true
+        journalctl --user -u "$SERVICE_NAME" -n 80 --no-pager >&2 || true
+        fail "amesh-node user service did not reach active state"
+      fi
+      log "installed and started user service: $SERVICE_NAME"
+      log "service logs: journalctl --user -u ${SERVICE_NAME} -f"
     fi
-    log "installed and started user service: $SERVICE_NAME"
-    log "service logs: journalctl --user -u ${SERVICE_NAME} -f"
   else
     log "systemctl not found; service file written to $SERVICE_PATH"
     log "start manually: AMESH_ACPX_PATH='${ACPX_BIN}' '${binary_path}' run --state '${STATE_PATH}'"
