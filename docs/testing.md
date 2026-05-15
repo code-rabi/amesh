@@ -38,3 +38,5 @@
 - The web app also covers the top-bar MCP config panel so the copy-paste client snippets stay aligned with the server endpoint and scope headers.
 - The Go daemon owns table-driven tests for config loading, reconnect logic, update, detect, exposed-path command dispatch, and `acpx` process lifecycle including streamed output and cancellation.
 - The dev helper script also has a regression shell test for the stale local reconnect-token path, so local `pnpm dev:daemon` re-registers automatically after a fresh control-plane reset.
+- The Go daemon also covers the shared `reinstall` subcommand and verifies that reinstall mode passes the destructive reset flag through to the installer.
+- `scripts/test-install-amesh-node.sh` also covers remote self-update and full reinstall flows, including reinstall-time cleanup of stale node state, config, service, binaries, and managed amesh home.

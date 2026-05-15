@@ -19,6 +19,7 @@ SERVER_URL="${SERVER_URL:-}"
 REGISTRATION_TOKEN="${REGISTRATION_TOKEN:-}"
 NODE_ID="${NODE_ID:-$(hostname)-amesh}"
 SELF_UPDATE="${AMESH_NODE_SELF_UPDATE:-0}"
+REINSTALL="${AMESH_NODE_REINSTALL:-0}"
 
 log() {
   printf '%s\n' "$*" >&2
@@ -219,6 +220,16 @@ main() {
   cli_binary_path="${AMESH_CLI_PATH:-$install_dir/amesh}"
   tmp_dir="$(mktemp -d)"
   trap 'rm -rf "${tmp_dir}"' EXIT
+
+  if [[ "$REINSTALL" == "1" ]]; then
+    log "reinstall requested; removing existing node install artifacts"
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl --user stop "$SERVICE_NAME" >/dev/null 2>&1 || true
+      systemctl --user disable "$SERVICE_NAME" >/dev/null 2>&1 || true
+    fi
+    rm -f "$SERVICE_PATH" "$STATE_PATH" "$CONFIG_PATH" "$binary_path" "$cli_binary_path"
+    rm -rf "$AMESH_HOME"
+  fi
 
   mkdir -p "${install_dir}"
   mkdir -p "${AMESH_HOME}"

@@ -140,6 +140,30 @@ func TestRunDispatchesUpdateSubcommand(t *testing.T) {
 	}
 }
 
+func TestRunDispatchesReinstallSubcommand(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	err := run(
+		context.Background(),
+		[]string{"reinstall"},
+		func(_ context.Context, _ io.Writer, _ io.Writer, options nodeUpdateOptions) error {
+			called = true
+			if !options.Reinstall {
+				t.Fatal("expected reinstall flag to be set")
+			}
+			return nil
+		},
+		func(context.Context, string) error { return nil },
+	)
+	if err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	if !called {
+		t.Fatal("expected update runner to be called for reinstall")
+	}
+}
+
 func TestRunDispatchesDetectSubcommand(t *testing.T) {
 	t.Parallel()
 
@@ -275,6 +299,43 @@ func TestRunUpdatePassesRuntimeContextToInstaller(t *testing.T) {
 		"CONFIG_PATH=/srv/amesh/agents.json",
 		"STATE_PATH=/srv/amesh/node-state.json",
 		"AMESH_NODE_SELF_UPDATE=1",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("installer env = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestRunReinstallPassesResetModeToInstaller(t *testing.T) {
+	binDir := t.TempDir()
+	envLogPath := filepath.Join(t.TempDir(), "installer-env.log")
+	writeExecutable(t, filepath.Join(binDir, "curl"), fmt.Sprintf(`#!/bin/sh
+	printf 'AMESH_NODE_REINSTALL=%%s\nSERVER_URL=%%s\nSTATE_PATH=%%s\n' \
+	  "$AMESH_NODE_REINSTALL" "$SERVER_URL" "$STATE_PATH" > %q
+	printf '%%s\n' '#!/bin/sh'
+	printf '%%s\n' 'exit 0'
+`, envLogPath))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("AMESH_INSTALL_URL", "https://example.invalid/install-amesh-node.sh")
+
+	var stdout bytes.Buffer
+	err := runReinstall(context.Background(), &stdout, io.Discard, nodeUpdateOptions{
+		ServerURL: "ws://example.invalid/ws?role=node",
+		StatePath: "/srv/amesh/node-state.json",
+	})
+	if err != nil {
+		t.Fatalf("runReinstall() error = %v", err)
+	}
+
+	bytes, err := os.ReadFile(envLogPath)
+	if err != nil {
+		t.Fatalf("read env log: %v", err)
+	}
+	got := string(bytes)
+	for _, want := range []string{
+		"AMESH_NODE_REINSTALL=1",
+		"SERVER_URL=ws://example.invalid/ws?role=node",
+		"STATE_PATH=/srv/amesh/node-state.json",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("installer env = %q, want %q", got, want)
