@@ -68,6 +68,7 @@ func TestRunDaemonLoopReconnectsAfterDisconnect(t *testing.T) {
 			"node-a",
 			"token-a",
 			writeConfig(t, nodeconfig.File{NodeName: "node-a"}),
+			filepath.Join(t.TempDir(), "node-state.json"),
 			acpx.Runner{},
 			newSessionStore(),
 			func(_ string) daemonClient {
@@ -89,7 +90,7 @@ func TestRunDaemonLoopReconnectsAfterDisconnect(t *testing.T) {
 				}
 				return nil
 			},
-			func(context.Context, io.Writer, io.Writer) error {
+			func(context.Context, io.Writer, io.Writer, nodeUpdateOptions) error {
 				t.Fatal("unexpected update invocation")
 				return nil
 			},
@@ -125,7 +126,7 @@ func TestRunDispatchesUpdateSubcommand(t *testing.T) {
 	err := run(
 		context.Background(),
 		[]string{"update"},
-		func(context.Context, io.Writer, io.Writer) error {
+		func(context.Context, io.Writer, io.Writer, nodeUpdateOptions) error {
 			called = true
 			return nil
 		},
@@ -147,7 +148,7 @@ func TestRunDispatchesDetectSubcommand(t *testing.T) {
 	err := run(
 		context.Background(),
 		[]string{"detect", "--config", configPath},
-		func(context.Context, io.Writer, io.Writer) error { return nil },
+		func(context.Context, io.Writer, io.Writer, nodeUpdateOptions) error { return nil },
 		func(_ context.Context, path string) error {
 			called = path == configPath
 			return nil
@@ -196,6 +197,7 @@ func TestRunDaemonSessionHandlesNodeUpdate(t *testing.T) {
 		},
 	}
 
+	statePath := filepath.Join(t.TempDir(), "node-state.json")
 	called := false
 	err := runDaemonSession(
 		context.Background(),
@@ -203,12 +205,25 @@ func TestRunDaemonSessionHandlesNodeUpdate(t *testing.T) {
 		"node-a",
 		"token-a",
 		writeConfig(t, nodeconfig.File{NodeName: "node-a"}),
+		statePath,
 		acpx.Runner{},
 		newSessionStore(),
 		func(string) daemonClient { return client },
 		func(context.Context, nodeconfig.AgentConfig) error { return nil },
-		func(context.Context, io.Writer, io.Writer) error {
+		func(_ context.Context, _ io.Writer, _ io.Writer, options nodeUpdateOptions) error {
 			called = true
+			if options.ServerURL != "ws://example.invalid/ws?role=node" {
+				t.Fatalf("update server url = %q", options.ServerURL)
+			}
+			if options.NodeID != "node-a" {
+				t.Fatalf("update node id = %q", options.NodeID)
+			}
+			if options.StatePath != statePath {
+				t.Fatalf("update state path = %q, want %q", options.StatePath, statePath)
+			}
+			if !options.SelfUpdate {
+				t.Fatal("expected self update flag")
+			}
 			return nil
 		},
 		func(context.Context, string) error {
@@ -223,6 +238,48 @@ func TestRunDaemonSessionHandlesNodeUpdate(t *testing.T) {
 		t.Fatal("expected update runner to be called")
 	}
 	assertEnvelopeTypes(t, client.sent, []string{"node.resume", "node.capabilities.sync"})
+}
+
+func TestRunUpdatePassesRuntimeContextToInstaller(t *testing.T) {
+	binDir := t.TempDir()
+	envLogPath := filepath.Join(t.TempDir(), "installer-env.log")
+	writeExecutable(t, filepath.Join(binDir, "curl"), fmt.Sprintf(`#!/bin/sh
+	printf 'SERVER_URL=%%s\nNODE_ID=%%s\nCONFIG_PATH=%%s\nSTATE_PATH=%%s\nAMESH_NODE_SELF_UPDATE=%%s\n' \
+	  "$SERVER_URL" "$NODE_ID" "$CONFIG_PATH" "$STATE_PATH" "$AMESH_NODE_SELF_UPDATE" > %q
+	printf '%%s\n' '#!/bin/sh'
+	printf '%%s\n' 'exit 0'
+`, envLogPath))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("AMESH_INSTALL_URL", "https://example.invalid/install-amesh-node.sh")
+
+	var stdout bytes.Buffer
+	err := runUpdate(context.Background(), &stdout, io.Discard, nodeUpdateOptions{
+		ServerURL:  "ws://example.invalid/ws?role=node",
+		NodeID:     "node-a",
+		ConfigPath: "/srv/amesh/agents.json",
+		StatePath:  "/srv/amesh/node-state.json",
+		SelfUpdate: true,
+	})
+	if err != nil {
+		t.Fatalf("runUpdate() error = %v", err)
+	}
+
+	bytes, err := os.ReadFile(envLogPath)
+	if err != nil {
+		t.Fatalf("read env log: %v", err)
+	}
+	got := string(bytes)
+	for _, want := range []string{
+		"SERVER_URL=ws://example.invalid/ws?role=node",
+		"NODE_ID=node-a",
+		"CONFIG_PATH=/srv/amesh/agents.json",
+		"STATE_PATH=/srv/amesh/node-state.json",
+		"AMESH_NODE_SELF_UPDATE=1",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("installer env = %q, want %q", got, want)
+		}
+	}
 }
 
 func TestRunDaemonSessionHandlesNodeDetect(t *testing.T) {
@@ -251,11 +308,12 @@ func TestRunDaemonSessionHandlesNodeDetect(t *testing.T) {
 				{ID: "agent-a", Name: "Agent A", ACPXAgent: "claude"},
 			},
 		}),
+		filepath.Join(t.TempDir(), "node-state.json"),
 		acpx.Runner{},
 		newSessionStore(),
 		func(string) daemonClient { return client },
 		func(context.Context, nodeconfig.AgentConfig) error { return nil },
-		func(context.Context, io.Writer, io.Writer) error { return nil },
+		func(context.Context, io.Writer, io.Writer, nodeUpdateOptions) error { return nil },
 		func(_ context.Context, path string) error {
 			called = true
 			cancel()
@@ -306,6 +364,7 @@ func TestRunDaemonSessionHandlesNodePathUpdate(t *testing.T) {
 		"node-a",
 		"token-a",
 		configPath,
+		filepath.Join(t.TempDir(), "node-state.json"),
 		acpx.Runner{},
 		newSessionStore(),
 		func(string) daemonClient { return client },
@@ -313,7 +372,7 @@ func TestRunDaemonSessionHandlesNodePathUpdate(t *testing.T) {
 			cancel()
 			return nil
 		},
-		func(context.Context, io.Writer, io.Writer) error { return nil },
+		func(context.Context, io.Writer, io.Writer, nodeUpdateOptions) error { return nil },
 		func(context.Context, string) error { return nil },
 	)
 	if err != nil {
@@ -368,13 +427,14 @@ func TestRunDaemonSessionHandlesNodePathBrowse(t *testing.T) {
 			"node-a",
 			"token-a",
 			configPath,
+			filepath.Join(t.TempDir(), "node-state.json"),
 			acpx.Runner{},
 			newSessionStore(),
 			func(string) daemonClient { return client },
 			func(context.Context, nodeconfig.AgentConfig) error {
 				return nil
 			},
-			func(context.Context, io.Writer, io.Writer) error { return nil },
+			func(context.Context, io.Writer, io.Writer, nodeUpdateOptions) error { return nil },
 			func(context.Context, string) error { return nil },
 		)
 	}()
@@ -491,6 +551,7 @@ func TestRunDaemonSessionSendsHealthProbeLogs(t *testing.T) {
 				{ID: "agent-openclaw", Name: "OpenClaw", ACPXAgent: "openclaw"},
 			},
 		}),
+		filepath.Join(t.TempDir(), "node-state.json"),
 		acpx.Runner{},
 		newSessionStore(),
 		func(string) daemonClient { return client },
@@ -498,7 +559,7 @@ func TestRunDaemonSessionSendsHealthProbeLogs(t *testing.T) {
 			cancel()
 			return errors.New("ACP metadata is missing")
 		},
-		func(context.Context, io.Writer, io.Writer) error { return nil },
+		func(context.Context, io.Writer, io.Writer, nodeUpdateOptions) error { return nil },
 		func(context.Context, string) error { return nil },
 	)
 	if err != nil {
