@@ -326,7 +326,7 @@ func verifiedOpenClawEnv(ctx context.Context, runner acpx.Runner, fallback map[s
 	}
 
 	baseEntries := filepath.SplitList(os.Getenv("PATH"))
-	nodeDirs := lookPathDir("node")
+	nodeDirs := commandPathDirs("node")
 	for _, dir := range candidateDirs {
 		pathEntries := uniquePathEntries([]string{dir}, nodeDirs, baseEntries)
 		env := map[string]string{
@@ -365,21 +365,22 @@ func openClawPathDirs() []string {
 		if err != nil || info.IsDir() || info.Mode()&0o111 == 0 {
 			continue
 		}
-		clean := filepath.Clean(dir)
-		if _, ok := seen[clean]; ok {
-			continue
+		for _, candidateDir := range executableDirs(path) {
+			if _, ok := seen[candidateDir]; ok {
+				continue
+			}
+			seen[candidateDir] = struct{}{}
+			dirs = append(dirs, candidateDir)
 		}
-		seen[clean] = struct{}{}
-		dirs = append(dirs, clean)
 	}
 	return dirs
 }
 
 func detectedAgentEnv(candidate detectableAgent) map[string]string {
 	pathEntries := uniquePathEntries(
+		commandPathDirs(candidate.ACPXAgent),
+		commandPathDirs("node"),
 		filepath.SplitList(os.Getenv("PATH")),
-		lookPathDir(candidate.ACPXAgent),
-		lookPathDir("node"),
 	)
 	if len(pathEntries) == 0 {
 		return map[string]string{}
@@ -389,7 +390,7 @@ func detectedAgentEnv(candidate detectableAgent) map[string]string {
 	}
 }
 
-func lookPathDir(command string) []string {
+func commandPathDirs(command string) []string {
 	if strings.TrimSpace(command) == "" {
 		return nil
 	}
@@ -397,11 +398,35 @@ func lookPathDir(command string) []string {
 	if err != nil {
 		return nil
 	}
-	dir := strings.TrimSpace(filepath.Dir(path))
-	if dir == "" {
+	return executableDirs(path)
+}
+
+func executableDirs(path string) []string {
+	path = strings.TrimSpace(path)
+	if path == "" {
 		return nil
 	}
-	return []string{dir}
+
+	dirs := make([]string, 0, 2)
+	add := func(dir string) {
+		dir = strings.TrimSpace(dir)
+		if dir == "" {
+			return
+		}
+		dir = filepath.Clean(dir)
+		for _, existing := range dirs {
+			if existing == dir {
+				return
+			}
+		}
+		dirs = append(dirs, dir)
+	}
+
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		add(filepath.Dir(resolved))
+	}
+	add(filepath.Dir(path))
+	return dirs
 }
 
 func uniquePathEntries(groups ...[]string) []string {

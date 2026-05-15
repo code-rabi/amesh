@@ -638,6 +638,56 @@ exit 1
 	}
 }
 
+func TestDetectAgentsPrefersResolvedExecutableDirsForFNMStyleShims(t *testing.T) {
+	home := t.TempDir()
+	shimDir := filepath.Join(t.TempDir(), "fnm-multishell")
+	stableDir := filepath.Join(t.TempDir(), "fnm-installation", "bin")
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", shimDir)
+	t.Setenv("AMESH_ACPX_PATH", "")
+
+	managed := filepath.Join(home, ".local", "share", "amesh", "acpx", "bin", "acpx")
+	writeExecutable(t, managed, `#!/bin/sh
+if [ "$1" = "--help" ]; then
+cat <<'EOF'
+Commands:
+  codex [options] [prompt...]             Use codex agent
+EOF
+exit 0
+fi
+exit 1
+`)
+	writeExecutable(t, filepath.Join(stableDir, "node"), "#!/bin/sh\nexit 0\n")
+	writeExecutable(t, filepath.Join(stableDir, "codex"), "#!/bin/sh\nexit 0\n")
+	if err := os.MkdirAll(shimDir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", shimDir, err)
+	}
+	if err := os.Symlink(filepath.Join(stableDir, "node"), filepath.Join(shimDir, "node")); err != nil {
+		t.Fatalf("symlink node shim: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(stableDir, "codex"), filepath.Join(shimDir, "codex")); err != nil {
+		t.Fatalf("symlink codex shim: %v", err)
+	}
+
+	got := detectAgents(context.Background(), acpx.Runner{})
+	want := []nodeconfig.AgentConfig{
+		{
+			ID:        "agent-codex",
+			Name:      "Codex",
+			ACPXAgent: "codex",
+			Command:   managed,
+			Args:      []string{},
+			Env: map[string]string{
+				"PATH": strings.Join([]string{stableDir, shimDir}, string(os.PathListSeparator)),
+			},
+			Labels: []string{"detected"},
+		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("detectAgents() = %#v, want %#v", got, want)
+	}
+}
+
 func TestDetectAgentsVerifiesOpenClawACPReadinessAcrossPathCandidates(t *testing.T) {
 	home := t.TempDir()
 	badDir := filepath.Join(t.TempDir(), "bad-bin")
