@@ -13,6 +13,7 @@ Decision docs:
 
 - [deployment shape](docs/deployment.md)
 - [ACP alias bridge](docs/acp-alias-bridge.md)
+- [agent control MCP](docs/agent-control-mcp.md)
 
 Working rules:
 

@@ -10,6 +10,7 @@
 - `pnpm check:sentrux`
 - `go test ./...`
 - `bash -n scripts/dev-daemon.sh`
+- `bash scripts/test-dev-daemon.sh`
 - `bash -n scripts/sentrux-check.sh`
 - `bash scripts/test-install-amesh-node.sh`
 - `sh -n install-amesh-node.sh`
@@ -21,6 +22,7 @@
 
 - The shared protocol package has schema tests for the envelope and session start payload.
 - The server owns integration tests for node registration, direct chat, continued chat via `session.input`, session cancel, and trigger allow or deny behavior over a real websocket port.
+- The server also covers HTTP MCP initialize, tool discovery, scoped reachable-agent listing, and scoped agent-started sessions over the real `/mcp` endpoint.
 - The server also covers authenticated node update dispatch, including rejection for offline nodes.
 - The server also covers authenticated node detect dispatch, including rejection for offline nodes.
 - The server also covers zero-agent node registration so a node still appears in topology before any local agent inventory is available.
@@ -33,4 +35,6 @@
 - `scripts/test-install-amesh-node.sh` covers the installer's Node major parsing failure path and also executes the installer through stdin so the published `curl | bash` bootstrap shape stays working under `set -u`.
 - The GitHub Actions `CI` workflow also publishes dedicated `Knip` and `Sentrux` jobs so unused-code and architecture-rule regressions show up as separate status checks.
 - The web app owns UI coverage for topology rendering, session history recovery after refresh, and the dashboard `Detect agents`, `Update node`, and exposed-path actions.
+- The web app also covers the top-bar MCP config panel so the copy-paste client snippets stay aligned with the server endpoint and scope headers.
 - The Go daemon owns table-driven tests for config loading, reconnect logic, update, detect, exposed-path command dispatch, and `acpx` process lifecycle including streamed output and cancellation.
+- The dev helper script also has a regression shell test for the stale local reconnect-token path, so local `pnpm dev:daemon` re-registers automatically after a fresh control-plane reset.

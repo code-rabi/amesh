@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "../src/App.js";
@@ -319,6 +319,33 @@ describe("App shell", () => {
     await waitFor(() =>
       expect(screen.getByText(/REGISTRATION_TOKEN='server-registered-token'/i)).toBeTruthy()
     );
+  });
+
+  it("shows MCP config for an agent from the agent card", async () => {
+    narrowLayout = true;
+    topologyAgents = [
+      {
+        id: "agent-1",
+        nodeId: "node-1",
+        name: "Planner",
+        backend: "acpx",
+        status: "online",
+        capabilities: { acpxAgent: "planner" }
+      }
+    ];
+    window.history.pushState({}, "", "/");
+    render(<App />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /mcp config for planner/i })).toBeTruthy()
+    );
+    fireEvent.click(screen.getByRole("button", { name: /mcp config for planner/i }));
+
+    const dialog = await screen.findByRole("dialog", { name: /mcp config for planner/i });
+    const text = dialog.textContent ?? "";
+    expect(text).toContain("agent-1");
+    expect(text).toContain("server-registered-token");
+    expect(text).toContain("/mcp");
   });
 
   it("loads the registration token into the empty-state install command", async () => {

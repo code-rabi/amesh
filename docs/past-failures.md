@@ -12,6 +12,12 @@
 - Cause: detection treated executable presence as enough, while OpenClaw's ACPX target needs `openclaw acp` to run as a clean stdio ACP server from the daemon environment.
 - Mitigation: OpenClaw detection now probes every `openclaw` executable directory on `PATH` with ACPX `sessions ensure`, persists the first PATH ordering that initializes successfully, and omits OpenClaw if none can start ACP. A regression test covers a broken wrapper before a working executable.
 
+## 2026-05-14: Local dev daemon could fail hard on a stale reconnect token
+
+- Symptom: `pnpm dev:daemon` connected to the local server, then exited immediately with `resume denied: invalid_reconnect_token`.
+- Cause: the dev helper reused `.amesh-node-state.json` across runs, but a fresh local control-plane database no longer recognized the saved reconnect token. The helper treated that as fatal instead of re-registering the local node.
+- Mitigation: `scripts/dev-daemon.sh` now detects that exact resume denial, deletes the stale local state file, re-runs `amesh-node register`, and restarts the daemon automatically. `scripts/test-dev-daemon.sh` covers the stale-token recovery path.
+
 ## 2026-05-13: Installer service PATH could be truncated by spaces
 
 - Symptom: a node installed successfully, but the user service could later run with a truncated `PATH` when the shell PATH contained entries with spaces such as WSL-mounted `Program Files` directories.
