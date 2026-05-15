@@ -57,7 +57,7 @@ sh -n scripts/install-amesh-node.sh
 - The published remote bootstrap path is `curl .../install-amesh-node.sh | ... bash`, so the installer must keep working when Bash reads it from stdin instead of from a file.
 - The installer now logs whether it is reusing or creating config/state, and on systemd hosts it fails the install if the user service does not remain active after startup. When that happens it prints both `systemctl --user status` and recent `journalctl --user -u amesh-node` output.
 - `install-amesh-node.sh` also normalizes `~/.acpx/config.json` so ACPX non-interactive health probes start from a valid baseline on first install.
-- Detected agents now persist the registering shell's `PATH` into node config. This avoids later service-only regressions where a systemd user unit resolves a different `node` binary than the interactive shell that successfully ran the same agent CLI.
+- Detected agents now persist the registering shell's `PATH` into node config and prepend the resolved executable directories for the detected agent CLI and `node`. This avoids later service-only regressions where a systemd user unit or an `fnm` multishell shim resolves a different or stale Node runtime than the interactive shell that successfully ran the same agent CLI.
 - ACP aliases for external clients can be served locally with `go run ./cmd/amesh acp <alias>`. The default alias registry is `~/.config/amesh/acp.json`:
 
 ```json
